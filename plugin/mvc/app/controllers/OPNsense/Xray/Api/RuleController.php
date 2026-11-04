@@ -17,8 +17,10 @@ class RuleController extends ApiMutableModelControllerBase
     public function searchItemAction()
     {
         $instance = $this->request->getPost('instance', 'string', '');
+        // v4.3.0: при фильтре по инстансу показываем и общие правила (instance = '')
         $filter = function ($record) use ($instance) {
-            return $instance === '' || (string)$record->instance === $instance;
+            $recInst = (string)$record->instance;
+            return $instance === '' || $recInst === $instance || $recInst === '';
         };
         $response = $this->searchBase(
             'rule',
@@ -35,7 +37,9 @@ class RuleController extends ApiMutableModelControllerBase
                 $names[(string)$uuid] = (string)$i->name;
             }
             foreach ($response['rows'] as &$row) {
-                $row['instance_name'] = $names[$row['instance']] ?? $row['instance'];
+                $row['instance_name'] = ($row['instance'] === '')
+                    ? '(all)'
+                    : ($names[$row['instance']] ?? $row['instance']);
             }
             unset($row);
         }
@@ -45,6 +49,28 @@ class RuleController extends ApiMutableModelControllerBase
     public function toggleItemAction($uuid, $enabled = null)
     {
         return $this->toggleBase('rule', $uuid, $enabled);
+    }
+
+    /**
+     * v4.3.0: POST /api/xray/rule/sortRules — порядок после drag&drop.
+     * Тело: order[] = uuid видимых строк grid в новом порядке (splice-
+     * семантика на сервере: вырезать posted и вставить на место первого).
+     */
+    public function sortRulesAction()
+    {
+        if (!$this->request->isPost() || !$this->request->hasPost('order')) {
+            return ['status' => 'error', 'message' => 'POST order[] required'];
+        }
+        $order = $this->request->getPost('order');
+        if (!is_array($order)) {
+            $order = [$order];
+        }
+        try {
+            $ok = \OPNsense\Xray\ConfigBuilder::reorderRules($order);
+            return ['status' => $ok ? 'ok' : 'error'];
+        } catch (\Exception $e) {
+            return ['status' => 'error', 'message' => $e->getMessage()];
+        }
     }
 
     public function getItemAction($uuid = null)

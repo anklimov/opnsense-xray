@@ -5,6 +5,17 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.3.0] — 2026-11-05 (fork)
+
+### Added
+- **Drag&drop переупорядочивание правил** — ручка ⋮⋮ в первой колонке grid Rules; порядок строк = порядок применения в `routing.rules`. HTML5 DnD без внешних библиотек; `POST /api/xray/rule/sortRules` с splice-семантикой: видимый блок встаёт на место своего самого раннего правила, скрытые (при фильтре по инстансу) правила сохраняют относительный порядок. После drop — `settings-changed` (появляется Apply), grid перезагружается
+- **Общие правила** — пустой *Instance* = правило для всех инстансов: `RoutingRule.instance` → `Required N`, `loadRules` включает правила с пустым instance в каждый инстанс (относительный порядок из config.xml сохраняется), фильтр grid по инстансу показывает его правила + общие, в диалоге добавлена опция «(all instances)»
+
+### Changed
+- `ConfigBuilder::reorderRules()` — DOM-перестановка детей `<routing_rules>` + `Config::save()`; чистая `computeSpliceOrder()` покрыта тестами (полный список, подмножество при фильтре, <2 элементов, невалидные uuid)
+
+---
+
 ## [4.2.1] — 2026-11-05 (fork)
 
 ### Fixed

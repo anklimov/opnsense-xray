@@ -180,7 +180,7 @@ MSS Clamping is not required for Xray (unlike WireGuard).
 
 ## Routing Rules (xray engine)
 
-The **Routing** tab holds per-instance rules compiled into `routing.rules` of the generated config (applied in creation order; the DNS hijack rule is prepended automatically, private networks → direct appended after them, so local traffic never loops into the proxy):
+The **Routing** tab holds rules compiled into `routing.rules` of the generated config, applied **top to bottom** — drag the ⋮⋮ handle to reorder (the order in the grid is the order in the config; after a drop, Apply rebuilds the running configs). Leave *Instance* empty to make a **common rule** that applies to every instance — filter the grid by an instance to see its own rules plus the common ones. The DNS hijack rule is prepended automatically, private networks → direct appended after them, so local traffic never loops into the proxy:
 
 | Match | Value examples | Notes |
 |-------|----------------|-------|
@@ -195,6 +195,10 @@ The **Routing** tab holds per-instance rules compiled into `routing.rules` of th
 | protocol | `quic, bittorrent, http, tls` | matches the sniffed protocol |
 
 Actions: `proxy` (upstream or balancer), `balancer`, `direct` (freedom), `block` (blackhole).
+
+**Reordering (v4.3.0)** — the drag handle in the first column moves a rule anywhere in the list; the new order is saved immediately (splice semantics: the visible block lands where its earliest rule was, hidden rules keep their relative order). Works while an instance filter is active too.
+
+**Common rules (v4.3.0)** — a rule with an empty *Instance* applies to **all** instances (shown as `(all)`); instance-specific and common rules interleave in one shared order, so you decide whether a common block fires before or after an instance rule.
 
 **AND conditions (v4.2.0)** — every rule can additionally carry *Network* (tcp / udp / tcp,udp) and *Source CIDR* (comma-separated); they are embedded into the SAME xray rule, e.g. `geosite: category-ru` + `network: tcp,udp` + `direct` compiles one-to-one into a hand-written `{"domain":["geosite:category-ru"],"network":"tcp,udp","outboundTag":"direct"}` rule.
 

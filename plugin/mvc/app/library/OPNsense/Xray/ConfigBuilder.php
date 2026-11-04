@@ -454,7 +454,10 @@ class ConfigBuilder
         }
         $rules = [];
         foreach ($rr->rule as $r) {
-            if ((string)($r->instance ?? '') !== $instUuid) {
+            $ruleInst = (string)($r->instance ?? '');
+            // v4.3.0: пустой instance = общее правило — применяется во всех
+            // инстансах; относительный порядок из config.xml сохраняется
+            if ($ruleInst !== $instUuid && $ruleInst !== '') {
                 continue;
             }
             if ((string)($r->enabled ?? '1') !== '1') {
@@ -470,6 +473,94 @@ class ConfigBuilder
             ];
         }
         return $rules;
+    }
+
+    /**
+     * v4.3.0: чистая splice-семантика для переупорядочивания правил.
+     * $all — текущий полный порядок uuid; $posted — видимые (после фильтра)
+     * uuid в НОВОМ порядке. Posted-элементы вырезаются из $all и вставляются
+     * подряд на позицию ПЕРВОГО posted-элемента; остальные не двигаются.
+     * @return array новый полный порядок uuid
+     */
+    public static function computeSpliceOrder(array $all, array $posted): array
+    {
+        $posted = array_values(array_unique(array_intersect($posted, $all)));
+        if (count($posted) < 2) {
+            return array_values($all);
+        }
+        // позиция САМОГО РАННЕГО по оригиналу posted-элемента: posted[0]
+        // в новом порядке может стоять в $all далеко не первым
+        $firstPos = PHP_INT_MAX;
+        foreach ($posted as $u) {
+            $pos = array_search($u, $all, true);
+            if ($pos !== false && $pos < $firstPos) {
+                $firstPos = $pos;
+            }
+        }
+        if ($firstPos === PHP_INT_MAX) {
+            return array_values($all);
+        }
+        // до $firstPos в $all других posted-элементов нет (по определению
+        // самого раннего) — значит ровно $firstPos rest-элементов выше точки
+        $rest = array_values(array_diff($all, $posted));
+        return array_merge(
+            array_slice($rest, 0, $firstPos),
+            $posted,
+            array_slice($rest, $firstPos)
+        );
+    }
+
+    /**
+     * v4.3.0: переупорядочивание routing_rules в config.xml (drag в grid).
+     * Валидирует uuid, применяет computeSpliceOrder, переставляет XML-узлы
+     * и сохраняет конфиг. @return bool
+     */
+    public static function reorderRules(array $postedOrder): bool
+    {
+        $cfg = \OPNsense\Core\Config::getInstance()->object();
+        $parent = $cfg->OPNsense->xray->routing_rules ?? null;
+        if ($parent === null) {
+            return false;
+        }
+        $nodes = [];           // uuid => SimpleXML-элемент
+        $all = [];             // текущий порядок uuid
+        foreach ($parent->rule as $r) {
+            $uuid = (string)$r['uuid'];
+            if ($uuid === '') {
+                continue;
+            }
+            $nodes[$uuid] = $r;
+            $all[] = $uuid;
+        }
+        if (count($all) < 2) {
+            return true;
+        }
+        $posted = [];
+        foreach ($postedOrder as $u) {
+            $u = strtolower(trim((string)$u));
+            if (preg_match('/^[0-9a-f-]{36}$/', $u) && isset($nodes[$u])) {
+                $posted[] = $u;
+            }
+        }
+        $new = self::computeSpliceOrder($all, $posted);
+        if ($new === array_values($all)) {
+            return true; // порядок не изменился
+        }
+        $domParent = dom_import_simplexml($parent);
+        $moved = [];
+        foreach ($new as $uuid) {
+            $moved[] = dom_import_simplexml($nodes[$uuid]);
+        }
+        foreach ($moved as $n) {
+            if ($n->parentNode === $domParent) {
+                $domParent->removeChild($n);
+            }
+        }
+        foreach ($moved as $n) {
+            $domParent->appendChild($n);
+        }
+        \OPNsense\Core\Config::getInstance()->save();
+        return true;
     }
 
     /** @return array список ['uuid','group','name','outbound_config'] */

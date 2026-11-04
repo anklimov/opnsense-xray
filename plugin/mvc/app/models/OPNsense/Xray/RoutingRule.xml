@@ -22,7 +22,8 @@
                         <display>name</display>
                     </instances>
                 </Model>
-                <Required>Y</Required>
+                <!-- v4.3.0: пусто = общее правило (применяется во всех инстансах) -->
+                <Required>N</Required>
             </instance>
             <name type="TextField">
                 <Required>N</Required>

@@ -179,8 +179,99 @@
                         var cls = { proxy: 'label-primary', balancer: 'label-info', direct: 'label-success', block: 'label-danger' };
                         return '<span class="label ' + (cls[row.action] || 'label-default') + '" style="font-size:11px;">'
                             + escAttr(row.action) + '</span>';
+                    },
+                    // v4.3.0: ручка drag&drop (порядок правил = порядок применения)
+                    dragHandle: function (column, row) {
+                        return '<span class="fa fa-arrows-v xray-drag-handle" draggable="true" data-row-id="'
+                            + escAttr(row.uuid) + '" title="{{ lang._('Drag to reorder') }}"></span>';
                     }
                 }
+            }
+        });
+
+        // ── v4.3.0: drag&drop переупорядочивание правил ──────────────
+        // HTML5 DnD без внешних библиотек; порядок видимых строк уходит
+        // в sortRules (splice-семантика), grid перезагружается
+        var xrayDragUuid = null;
+        var xrayDragRow = null;
+        $('#grid-rules').on('dragstart', '.xray-drag-handle', function (e) {
+            xrayDragUuid = $(this).data('row-id');
+            xrayDragRow = $(this).closest('tr');
+            try {
+                e.originalEvent.dataTransfer.effectAllowed = 'move';
+                e.originalEvent.dataTransfer.setData('text/plain', String(xrayDragUuid));
+            } catch (ignore) {}
+            xrayDragRow.addClass('xray-dragging');
+        });
+        $('#grid-rules').on('dragend', '.xray-drag-handle', function () {
+            xrayDragUuid = null;
+            xrayDragRow = null;
+            $('#grid-rules tbody tr').removeClass('xray-drop-target xray-dragging');
+        });
+        $('#grid-rules').on('dragover', 'tbody tr', function (e) {
+            if (xrayDragUuid === null) {
+                return;
+            }
+            e.preventDefault();
+            e.originalEvent.dataTransfer.dropEffect = 'move';
+            $('#grid-rules tbody tr').removeClass('xray-drop-target');
+            $(this).addClass('xray-drop-target');
+        });
+        $('#grid-rules').on('drop', 'tbody tr', function (e) {
+            if (xrayDragUuid === null) {
+                return;
+            }
+            e.preventDefault();
+            var target = this;
+            var rowRect = target.getBoundingClientRect();
+            var after = (e.originalEvent.clientY || 0) > rowRect.top + rowRect.height / 2;
+            var order = [];
+            $('#grid-rules tbody tr').each(function () {
+                if (this === xrayDragRow[0]) {
+                    return; // вырезаем тащимую строку
+                }
+                if (this === target) {
+                    if (!after) {
+                        order.push(xrayDragUuid);
+                    }
+                    order.push(String($(this).data('row-id') || ''));
+                    if (after) {
+                        order.push(xrayDragUuid);
+                    }
+                } else {
+                    order.push(String($(this).data('row-id') || ''));
+                }
+            });
+            if (order.indexOf(String(xrayDragUuid)) === -1) {
+                order.push(String(xrayDragUuid));
+            }
+            xrayDragUuid = null;
+            xrayDragRow = null;
+            $.ajax({
+                url: '/api/xray/rule/sortRules',
+                type: 'POST',
+                data: {order: order},
+                traditional: true,
+                dataType: 'json',
+                success: function (data) {
+                    $('#grid-rules').bootgrid('reload');
+                    if (data && data.status === 'error') {
+                        alert(data.message || 'sort failed');
+                    }
+                    // порядок влияет на генерируемые конфиги — нужен Apply
+                    $(document).trigger('settings-changed');
+                },
+                error: function (xhr) {
+                    alert("{{ lang._('HTTP error:') }} " + xhr.status);
+                }
+            });
+        });
+
+        // v4.3.0: пустой Instance = общее правило — добавляем опцию в диалог
+        $('#DialogRule').on('show.bs.modal', function () {
+            var $sel = $(this).find('[id="rule.instance"]');
+            if ($sel.length && $sel.find('option[value=""]').length === 0) {
+                $sel.prepend($('<option></option>').val('').text("{{ lang._('(all instances)') }}"));
             }
         });
 

@@ -1,6 +1,14 @@
 <!-- ROUTING RULES -->
 <div id="routing" class="tab-pane fade in">
 
+    {# v4.3.0: drag&drop переупорядочивание правил (порядок = порядок применения) #}
+    <style>
+        .xray-drag-handle { cursor: move; color: #999; }
+        .xray-drag-handle:hover { color: #337ab7; }
+        #grid-rules tbody tr.xray-drop-target { outline: 2px dashed #337ab7; outline-offset: -2px; }
+        #grid-rules tbody tr.xray-dragging { opacity: 0.5; }
+    </style>
+
     {# ── Toolbar ─────────────────────────────────────────────────────── #}
     <div class="row">
         <section class="col-xs-12">
@@ -34,6 +42,11 @@
                             data-type="string"
                             data-identifier="true"
                             data-visible="false">{{ lang._('ID') }}</th>
+
+                        <th data-column-id="drag"
+                            data-width="2.5em"
+                            data-sortable="false"
+                            data-formatter="dragHandle">{{ lang._('') }}</th>
 
                         <th data-column-id="enabled"
                             data-width="6em"

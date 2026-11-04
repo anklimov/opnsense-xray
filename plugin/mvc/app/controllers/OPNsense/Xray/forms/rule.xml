@@ -14,7 +14,7 @@
         <label>Instance</label>
         <type>dropdown</type>
         <style>selectpicker</style>
-        <help>The xray instance this rule applies to.</help>
+        <help>The xray instance this rule applies to. Leave empty to make this rule apply to all instances (shown as "(all)").</help>
     </field>
     <field>
         <id>rule.name</id>
