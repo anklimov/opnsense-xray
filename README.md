@@ -192,8 +192,13 @@ The **Routing** tab holds per-instance rules compiled into `routing.rules` of th
 | inboundTag | `tun-in`, `socks-in`, `vless-in` | e.g. route incoming clients differently |
 | geoip | `private, cn, ru` | `geoip:` prefix added automatically; geoip.dat |
 | geosite | `category-ads-all, google` | `geosite:` prefix added automatically; geosite.dat |
+| protocol | `quic, bittorrent, http, tls` | matches the sniffed protocol |
 
 Actions: `proxy` (upstream or balancer), `balancer`, `direct` (freedom), `block` (blackhole).
+
+**AND conditions (v4.2.0)** — every rule can additionally carry *Network* (tcp / udp / tcp,udp) and *Source CIDR* (comma-separated); they are embedded into the SAME xray rule, e.g. `geosite: category-ru` + `network: tcp,udp` + `direct` compiles one-to-one into a hand-written `{"domain":["geosite:category-ru"],"network":"tcp,udp","outboundTag":"direct"}` rule.
+
+**Routing Domain Strategy (v4.2.0)** — per instance in the dialog (Routing & Load Balancing section): `AsIs`, `IPIfNonMatch` (default — same as before), `IPOnDemand`.
 
 Example: block ads everywhere and let clients reach corporate subnets directly:
 
@@ -201,6 +206,48 @@ Example: block ads everywhere and let clients reach corporate subnets directly:
 |-------|-------|--------|
 | geosite | category-ads-all | block |
 | geoip | private | direct |
+
+### UI walkthrough — recreating a hand-written config
+
+This raw JSON (a real working setup: two upstream VLESS nodes, leastLoad balancer, RU split, ad/quic blocking):
+
+```json
+"observatory": {
+    "subjectSelector": ["out_tunnel_vortex-vless-nginx", "out_tunnel_marvel-vless-nginx"],
+    "probeUrl": "https://connectivitycheck.gstatic.com/generate_204",
+    "probeInterval": "30s",
+    "enableConcurrency": true
+},
+"routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "balancers": [{ "tag": "out_balancer", "selector": ["out_tunnel_..."],
+                    "fallbackTag": "out_tunnel_...", "strategy": { "type": "leastLoad" } }],
+    "rules": [
+        { "outboundTag": "block", "protocol": ["quick"] },
+        { "outboundTag": "block", "domain": ["geosite:category-ads-all"] },
+        { "remarks": "Direct domains", "domain": ["geosite:category-ru"], "network": "tcp,udp", "outboundTag": "out_direct" },
+        { "remarks": "Direct IPs", "ip": ["geoip:ru"], "network": "tcp,udp", "outboundTag": "out_direct" },
+        { "remarks": "Balanced out via tunnel", "network": "tcp,udp", "balancerTag": "out_balancer" }
+    ]
+}
+```
+
+is built through the UI like this:
+
+| JSON piece | UI |
+|------------|----|
+| the two upstream nodes | Groups tab: create a group, add both servers (or paste each link with **Import** in the instance dialog) |
+| observatory: probeUrl / probeInterval | instance dialog → Routing & Load Balancing: **Enable Balancer** ✓, strategy `leastLoad`, Probe URL / Probe Interval. `subjectSelector`/`enableConcurrency` are generated automatically (all group outbounds; burstObservatory probes concurrently) |
+| balancers: selector / fallbackTag | generated automatically: selector = all group outbounds, fallbackTag = first node (or block when dead) |
+| domainStrategy | instance dialog → Routing & Load Balancing → **Routing Domain Strategy** |
+| rule `{"protocol":["quick"],"outboundTag":"block"}` | Routing → + → Match **protocol**, Value `quic`, Action **block** |
+| ads block | Match **geosite**, Value `category-ads-all`, Action **block** |
+| "Direct domains" | Match **geosite**, Value `category-ru`, **Network (AND)** `tcp,udp`, Action **direct** |
+| "Direct IPs" | Match **geoip**, Value `ru`, **Network (AND)** `tcp,udp`, Action **direct** |
+| "Balanced out via tunnel" | Match **network**, Value `tcp,udp`, Action **balancer** (also generated automatically as the catch-all when LB is on) |
+| TUN inbound | instance dialog → TUN Driver `Xray TUN inbound (native)`, interface `tun5` (or `xraytun0` to assign it in OPNsense), gateway, MTU |
+
+Verify with **Preview Generated Config** — the result matches the hand-written JSON (plus the automatic DNS-hijack and private-networks rules).
 
 ---
 

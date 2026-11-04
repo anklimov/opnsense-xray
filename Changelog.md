@@ -5,6 +5,18 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.2.0] — 2026-11-05 (fork)
+
+### Added
+- **Матчинг по протоколу** — новый тип правила `protocol` (значения как результат sniffing: `quic`, `bittorrent`, `http`, `tls`): например, `protocol: quic → block` из конфигов вида `{"protocol":["quick"],"outboundTag":"block"}`
+- **AND-условия в правилах** — опциональные *Network* (tcp/udp/tcp,udp) и *Source CIDR* встраиваются в ТО ЖЕ правило xray: `geosite:category-ru` + `network:tcp,udp` + `direct` компилируется один-в-один как рукописное правило (в модели "both" = tcp,udp — запятая в XML-имени запрещена)
+- **Routing Domain Strategy** — per-instance настройка `domain_strategy` (AsIs / IPIfNonMatch / IPOnDemand; дефолт IPIfNonMatch — поведение прежних конфигов не меняется); секция формы переименована в Routing & Load Balancing
+
+### Fixed
+- **QR без библиотеки** — если `/js/xray-qrcode.min.js` не загрузился, модалка всё равно показывает share-ссылку (копируемую), а вместо QR — конкретная причина и путь к файлу
+
+---
+
 ## [4.1.0] — 2026-11-05 (fork)
 
 ### Added

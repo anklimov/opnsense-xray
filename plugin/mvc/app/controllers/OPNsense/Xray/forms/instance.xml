@@ -144,7 +144,14 @@
 
     <field>
         <type>header</type>
-        <label>Load Balancing</label>
+        <label>Routing &amp; Load Balancing</label>
+    </field>
+    <field>
+        <id>instance.domain_strategy</id>
+        <label>Routing Domain Strategy</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>How the routing engine resolves domains in rules. AsIs — only domain rules match, no DNS lookups; IPIfNonMatch (default) — resolve a domain to IP and test the IP rules when no domain rule matched; IPOnDemand — resolve only when an IP-based rule needs it.</help>
     </field>
     <field>
         <id>instance.lb_enabled</id>

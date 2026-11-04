@@ -192,8 +192,13 @@ MSS Clamping для Xray не требуется (в отличие от WireGua
 | inboundTag | `tun-in`, `socks-in`, `vless-in` | например, по-разному маршрутизировать входящих клиентов |
 | geoip | `private, cn, ru` | префикс `geoip:` добавится автоматически; geoip.dat |
 | geosite | `category-ads-all, google` | префикс `geosite:` добавится автоматически; geosite.dat |
+| protocol | `quic, bittorrent, http, tls` | матчинг по протоколу из sniffing |
 
 Действия: `proxy` (upstream или balancer), `balancer`, `direct` (freedom), `block` (blackhole).
+
+**AND-условия (v4.2.0)** — у каждого правила могут быть дополнительные *Network* (tcp / udp / tcp,udp) и *Source CIDR* (список через запятую); они встраиваются в ТО ЖЕ правило xray. Например, `geosite: category-ru` + `network: tcp,udp` + `direct` компилируется один-в-один в рукописное `{"domain":["geosite:category-ru"],"network":"tcp,udp","outboundTag":"direct"}`.
+
+**Routing Domain Strategy (v4.2.0)** — per-instance в диалоге (секция Routing & Load Balancing): `AsIs`, `IPIfNonMatch` (дефолт, как раньше), `IPOnDemand`.
 
 Пример: блокировать рекламу везде, а в корпоративные подсети ходить напрямую:
 
@@ -201,6 +206,48 @@ MSS Clamping для Xray не требуется (в отличие от WireGua
 |---------|----------|----------|
 | geosite | category-ads-all | block |
 | geoip | private | direct |
+
+### Пошаговый разбор — рукописный конфиг через UI
+
+Вот этот raw-JSON (реальный рабочий сетап: два upstream-узла VLESS, балансировщик leastLoad, сплит по РФ, блок рекламы и quic):
+
+```json
+"observatory": {
+    "subjectSelector": ["out_tunnel_vortex-vless-nginx", "out_tunnel_marvel-vless-nginx"],
+    "probeUrl": "https://connectivitycheck.gstatic.com/generate_204",
+    "probeInterval": "30s",
+    "enableConcurrency": true
+},
+"routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "balancers": [{ "tag": "out_balancer", "selector": ["out_tunnel_..."],
+                    "fallbackTag": "out_tunnel_...", "strategy": { "type": "leastLoad" } }],
+    "rules": [
+        { "outboundTag": "block", "protocol": ["quick"] },
+        { "outboundTag": "block", "domain": ["geosite:category-ads-all"] },
+        { "remarks": "Direct domains", "domain": ["geosite:category-ru"], "network": "tcp,udp", "outboundTag": "out_direct" },
+        { "remarks": "Direct IPs", "ip": ["geoip:ru"], "network": "tcp,udp", "outboundTag": "out_direct" },
+        { "remarks": "Balanced out via tunnel", "network": "tcp,udp", "balancerTag": "out_balancer" }
+    ]
+}
+```
+
+собирается через UI так:
+
+| Кусок JSON | Где в UI |
+|------------|----------|
+| два upstream-узла | вкладка Groups: создать группу, добавить оба сервера (или вставить каждую ссылку кнопкой **Import** в диалоге инстанса) |
+| observatory: probeUrl / probeInterval | диалог инстанса → Routing & Load Balancing: **Enable Balancer** ✓, стратегия `leastLoad`, Probe URL / Probe Interval. `subjectSelector`/`enableConcurrency` генерируются автоматически (все outbound'ы группы; burstObservatory проверяет конкурентно) |
+| balancers: selector / fallbackTag | генерируются автоматически: selector = все outbound'ы группы, fallbackTag = первый узел (или block при полном отказе) |
+| domainStrategy | диалог инстанса → Routing & Load Balancing → **Routing Domain Strategy** |
+| правило `{"protocol":["quick"],"outboundTag":"block"}` | Routing → + → Match **protocol**, Value `quic`, Action **block** |
+| блок рекламы | Match **geosite**, Value `category-ads-all`, Action **block** |
+| «Direct domains» | Match **geosite**, Value `category-ru`, **Network (AND)** `tcp,udp`, Action **direct** |
+| «Direct IPs» | Match **geoip**, Value `ru`, **Network (AND)** `tcp,udp`, Action **direct** |
+| «Balanced out via tunnel» | Match **network**, Value `tcp,udp`, Action **balancer** (при включённом LB такой catch-all также генерируется автоматически) |
+| TUN-inbound | диалог инстанса → TUN Driver `Xray TUN inbound (native)`, интерфейс `tun5` (или `xraytun0`, чтобы назначить его в OPNsense), gateway, MTU |
+
+Проверь результат кнопкой **Preview Generated Config** — он совпадёт с рукописным JSON (плюс автоматические правила DNS-hijack и private-networks → direct).
 
 ---
 

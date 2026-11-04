@@ -28,7 +28,7 @@
         <label>Match</label>
         <type>dropdown</type>
         <style>selectpicker</style>
-        <help>What to match on. domain — plain/keyword:/regexp:/full: patterns. ip — CIDR list. port / sourcePort — numbers and ranges like 80,443,1000-2000. network — tcp, udp or tcp,udp. inboundTag — traffic of a specific inbound (tun-in, socks-in, vless-in). geoip / geosite — lists from geoip.dat / geosite.dat (files are installed by install.sh into /usr/local/etc/xray-core/).</help>
+        <help>What to match on. domain — plain/keyword:/regexp:/full: patterns. ip — CIDR list. port / sourcePort — numbers and ranges like 80,443,1000-2000. network — tcp, udp or tcp,udp. inboundTag — traffic of a specific inbound (tun-in, socks-in, vless-in). geoip / geosite — lists from geoip.dat / geosite.dat (files are installed by install.sh into /usr/local/etc/xray-core/). protocol — sniffed protocol: http, tls, bittorrent, quic.</help>
     </field>
     <field>
         <id>rule.value</id>
@@ -36,6 +36,19 @@
         <type>text</type>
         <help>Comma-separated values. For geoip/geosite the geoip:/geosite: prefix is added automatically if omitted.</help>
         <hint>Examples: "google.com, full:example.org" (domain) · "10.0.0.0/8" (ip) · "private, cn" (geoip) · "category-ads-all" (geosite) · "tun-in" (inboundTag) · "80,443" (port)</hint>
+    </field>
+    <field>
+        <id>rule.network</id>
+        <label>Network (AND)</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>Optional additional condition — embedded into the SAME xray rule (logical AND). E.g. geosite:category-ru + tcp,udp exactly like a hand-written config. Leave empty to match any network.</help>
+    </field>
+    <field>
+        <id>rule.source</id>
+        <label>Source CIDR (AND)</label>
+        <type>text</type>
+        <help>Optional additional condition — source IP/CIDR list (comma-separated), embedded into the same rule. E.g. 192.168.1.0/24,10.0.0.5.</help>
     </field>
     <field>
         <id>rule.action</id>

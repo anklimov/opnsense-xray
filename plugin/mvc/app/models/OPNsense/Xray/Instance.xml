@@ -147,6 +147,16 @@
             </dns_upstream>
 
             <!-- ── Load balancing / observatory ────────────────────────────── -->
+            <!-- v4.2.0: стратегия разрешения доменов в routing -->
+            <domain_strategy type="OptionField">
+                <Default>IPIfNonMatch</Default>
+                <Required>Y</Required>
+                <OptionValues>
+                    <AsIs>AsIs — resolve by the outbound</AsIs>
+                    <IPIfNonMatch>IPIfNonMatch (default)</IPIfNonMatch>
+                    <IPOnDemand>IPOnDemand</IPOnDemand>
+                </OptionValues>
+            </domain_strategy>
             <lb_enabled type="BooleanField">
                 <Default>0</Default>
             </lb_enabled>

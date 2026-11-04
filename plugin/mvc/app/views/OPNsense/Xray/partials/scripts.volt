@@ -1107,14 +1107,23 @@
                     }
                     $('#clientQrTitle').text(data.name || 'Client');
                     $('#clientQrUri').text(data.uri || '');
-                    try {
-                        var qr = qrcode(0, 'M');
-                        qr.addData(data.uri || '');
-                        qr.make();
-                        $('#clientQrImg').html(qr.createSvgTag({cellSize: 4, margin: 4}));
-                    } catch (e) {
+                    // v4.1.0: ссылка ценнее QR — показываем всегда; QR только
+                    // при загруженной библиотеке, с внятной причиной иначе
+                    if (typeof qrcode === 'undefined') {
                         $('#clientQrImg').html('<span class="text-danger" style="font-size: 12px;">' +
-                            '{{ lang._("QR render failed:") }} ' + escAttr(e.message || e) + '</span>');
+                            '{{ lang._("QR library not loaded (see the browser console). Check that the file exists on the router:") }}' +
+                            '<br/><code>/js/xray-qrcode.min.js</code>' +
+                            '{{ lang._(" — re-run install.sh and hard-refresh (Ctrl+Shift+R).") }}</span>');
+                    } else {
+                        try {
+                            var qr = qrcode(0, 'M');
+                            qr.addData(data.uri || '');
+                            qr.make();
+                            $('#clientQrImg').html(qr.createSvgTag({cellSize: 4, margin: 4}));
+                        } catch (e) {
+                            $('#clientQrImg').html('<span class="text-danger" style="font-size: 12px;">' +
+                                '{{ lang._("QR render failed:") }} ' + escAttr(e.message || e) + '</span>');
+                        }
                     }
                     $('#ClientQRModal').modal('show');
                 },

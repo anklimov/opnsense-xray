@@ -164,6 +164,7 @@ class ConfigBuilder
             'dns_mode'       => $s('dns_mode', 'off'),
             'dns_upstream'   => $s('dns_upstream', '1.1.1.1'),
 
+            'domain_strategy' => $s('domain_strategy', 'IPIfNonMatch'),
             'lb_enabled'     => $b('lb_enabled'),
             'lb_strategy'    => $s('lb_strategy', 'leastPing'),
             'lb_probe_url'   => $s('lb_probe_url', 'https://connectivitycheck.gstatic.com/generate_204'),
@@ -463,6 +464,9 @@ class ConfigBuilder
                 'type'   => (string)($r->type ?? 'domain'),
                 'value'  => (string)($r->value ?? ''),
                 'action' => (string)($r->action ?? 'proxy'),
+                // v4.2.0: AND-условия ("both" в модели = tcp,udp)
+                'network' => (string)($r->network ?? ''),
+                'source'  => (string)($r->source ?? ''),
             ];
         }
         return $rules;
@@ -1016,7 +1020,12 @@ class ConfigBuilder
             $inboundTags[] = $ib['tag'];
         }
 
-        $routing = ['domainStrategy' => 'IPIfNonMatch', 'rules' => []];
+        // v4.2.0: domainStrategy из настроек инстанса (дефолт — прежний)
+        $strategy = (string)($inst['domain_strategy'] ?? 'IPIfNonMatch');
+        if (!in_array($strategy, ['AsIs', 'IPIfNonMatch', 'IPOnDemand'], true)) {
+            $strategy = 'IPIfNonMatch';
+        }
+        $routing = ['domainStrategy' => $strategy, 'rules' => []];
 
         // 1. DNS hijack: port 53 из туннеля → встроенный DNS xray
         $hijackTags = [];
@@ -1036,9 +1045,22 @@ class ConfigBuilder
 
         // 2. Пользовательские правила (RoutingRule), в их порядке
         foreach ($rules as $r) {
+            // v4.2.0: AND-условия — network/source встраиваются в то же
+            // правило (geosite:category-ru + network tcp,udp один-в-один
+            // как в конфиге вида "Direct domains")
+            $and = [];
+            $net = (string)($r['network'] ?? '');
+            if ($net !== '') {
+                $and['network'] = ($net === 'both' || $net === 'tcp,udp') ? 'tcp,udp' : $net;
+            }
+            $src = trim((string)($r['source'] ?? ''));
+            if ($src !== '') {
+                $and['source'] = self::splitValues($src);
+            }
             $routing['rules'][] = array_merge(
                 ['type' => 'field'],
                 self::ruleCondition($r['type'], $r['value']),
+                $and,
                 self::actionTarget($r['action'], $balancer, $defaultProxyTag)
             );
         }
@@ -1130,6 +1152,9 @@ class ConfigBuilder
                 return ['network' => implode(',', $values)];
             case 'inbound_tag':
                 return ['inboundTag' => $values];
+            case 'protocol':
+                // v4.2.0: матчится по результату sniffing (что увидит движок)
+                return ['protocol' => $values];
             default:
                 throw new \RuntimeException("unknown routing rule type {$type}");
         }

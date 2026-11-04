@@ -49,6 +49,7 @@
                     <inbound_tag>inboundTag</inbound_tag>
                     <geoip>geoip</geoip>
                     <geosite>geosite</geosite>
+                    <protocol>protocol</protocol>
                 </OptionValues>
             </type>
             <!-- Значения через запятую. Для geoip/geosite можно без префикса
@@ -60,6 +61,22 @@
                 <Required>Y</Required>
                 <Default></Default>
             </value>
+            <!-- v4.2.0: дополнительные AND-условия — встраиваются в ТО ЖЕ
+                 правило xray (например geosite:category-ru + network tcp,udp) -->
+            <network type="OptionField">
+                <Default></Default>
+                <Required>N</Required>
+                <!-- "both" хранится как ключ (запятая в XML-имени запрещена) -->
+                <OptionValues>
+                    <tcp>tcp</tcp>
+                    <udp>udp</udp>
+                    <both>tcp,udp</both>
+                </OptionValues>
+            </network>
+            <source type="TextField">
+                <Required>N</Required>
+                <Default></Default>
+            </source>
             <action type="OptionField">
                 <Default>proxy</Default>
                 <Required>Y</Required>
