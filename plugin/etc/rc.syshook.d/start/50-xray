@@ -83,6 +83,12 @@ setup_instance() {
 
     echo "[${_INST_UUID}] tun=[$TUN_IFACE] mtu=[$MTU] driver=[$DRIVER]"
 
+    # v4.4.0: TUN driver "off" — интерфейса нет, ждать нечего
+    if [ "$DRIVER" = "off" ]; then
+        echo "[${_INST_UUID}] TUN driver off — skipping TUN setup"
+        return 0
+    fi
+
     # v4.0.1: raw-конфиг без tun-inbound (или без "name") — ждать нечего
     if [ -z "$TUN_IFACE" ]; then
         echo "[${_INST_UUID}] raw config has no tun inbound (or no \"name\" in it) — skipping TUN setup"

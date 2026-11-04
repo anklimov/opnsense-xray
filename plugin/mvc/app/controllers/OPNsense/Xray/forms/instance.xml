@@ -61,7 +61,7 @@
         <label>TUN Driver</label>
         <type>dropdown</type>
         <style>selectpicker</style>
-        <help>"Xray TUN inbound (native)" — the TUN interface is created by xray-core itself (protocol "tun", requires xray-core 26.10+; on FreeBSD any valid lowercase name ending with a digit works (tun100, xraytun0); OPNsense hides tunN from Interfaces → Assignments, so a name like xraytun0 is required for GUI assignment). "tun2socks (legacy)" — the external tun2socks daemon forwarding the TUN to the SOCKS inbound. In Raw JSON mode the TUN details come from your config: native driver expects a "tun" inbound inside it, legacy expects a SOCKS/mixed inbound to forward to.</help>
+        <help>"Xray TUN inbound (native)" — the TUN interface is created by xray-core itself (protocol "tun", requires xray-core 26.10+; on FreeBSD any valid lowercase name ending with a digit works (tun100, xraytun0); OPNsense hides tunN from Interfaces → Assignments, so a name like xraytun0 is required for GUI assignment). "tun2socks (legacy)" — the external tun2socks daemon forwarding the TUN to the SOCKS inbound. "Off (no TUN)" — no TUN interface and no traffic capture at all: the instance only serves its inbounds (SOCKS5 / server inbound for incoming clients / custom inbounds) — useful for a pure entry-point box; at least one inbound must be enabled. In Raw JSON mode the TUN details come from your config: native driver expects a "tun" inbound inside it, legacy expects a SOCKS/mixed inbound to forward to.</help>
     </field>
     <field>
         <id>instance.tun_interface</id>

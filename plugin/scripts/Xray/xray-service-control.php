@@ -30,6 +30,12 @@ function t2s_conf_path(string $inst_uuid): string
 {
     return T2S_CONF_DIR . "/config-{$inst_uuid}.yaml";
 }
+/** v4.4.0: драйвер TUN — 'xray' | 'tun2socks' | 'off' (всё прочее = legacy) */
+function xray_norm_driver(string $d): string
+{
+    return in_array($d, ['xray', 'tun2socks', 'off'], true) ? $d : 'tun2socks';
+}
+
 function t2s_pid_path(string $inst_uuid): string
 {
     return "/var/run/tun2socks_{$inst_uuid}.pid";
@@ -404,7 +410,8 @@ function do_start(array $c): bool
         return false;
     }
 
-    $driver    = ($c['tun_driver'] ?? 'tun2socks') === 'xray' ? 'xray' : 'tun2socks';
+    // v4.4.0: драйвер может быть 'off' — нет ни TUN, ни tun2socks
+    $driver    = xray_norm_driver($c['tun_driver'] ?? 'tun2socks');
     $inst_uuid = $c['inst_uuid'];
 
     if ($driver === 'tun2socks' && !file_exists(T2S_BIN)) {
@@ -488,7 +495,19 @@ function xray_instance_status(array $c): array
 {
     $inst_uuid = $c['inst_uuid'];
     $xray = proc_is_running(xray_pid_path($inst_uuid));
-    $driver = ($c['tun_driver'] ?? 'tun2socks') === 'xray' ? 'xray' : 'tun2socks';
+    $driver = xray_norm_driver($c['tun_driver'] ?? 'tun2socks');
+
+    // v4.4.0: TUN off — нет ни TUN-интерфейса, ни tun2socks; ok = xray-core
+    if ($driver === 'off') {
+        return [
+            'status'    => $xray ? 'ok' : 'stopped',
+            'xray_core' => $xray ? 'running' : 'stopped',
+            'tun'       => 'n/a',
+            'tun2socks' => 'n/a',
+            'driver'    => 'off',
+            'inst_uuid' => $inst_uuid,
+        ];
+    }
 
     if ($driver === 'xray') {
         // v4.0.1: raw-конфиг может не иметь tun-inbound (или имени) — n/a

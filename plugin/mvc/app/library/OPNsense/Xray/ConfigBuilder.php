@@ -755,6 +755,16 @@ class ConfigBuilder
             }
         }
 
+        // v4.4.0: TUN driver "off" (или комбинация выключенных inbound'ов) —
+        // без единого inbound инстанс бессмыслен; падаем сразу с понятной
+        // ошибкой вместо молчаливого простаивающего xray-core
+        if (empty($inbounds)) {
+            throw new \RuntimeException(
+                'instance "' . $inst['name'] . '" has no inbounds: TUN driver is "Off" — '
+                . 'enable SOCKS5, the server inbound or add custom inbounds'
+            );
+        }
+
         return $inbounds;
     }
 

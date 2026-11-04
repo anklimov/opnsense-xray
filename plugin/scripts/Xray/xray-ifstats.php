@@ -41,6 +41,11 @@ if ($inst !== null) {
     $instUuid = (string)$inst['uuid'];
 }
 $tunIface = $instArr !== null ? (string)$instArr['tun_iface'] : 'proxytun2socks0';
+// v4.4.0: TUN driver off — интерфейса нет и не будет, не ждём его
+$tunDriverOff = ($instArr !== null && (string)$instArr['tun_driver'] === 'off');
+if ($tunDriverOff) {
+    $tunIface = '';
+}
 
 // ─── Uptime процесса по PID-файлу ────────────────────────────────────────────
 function proc_uptime(string $pidfile): ?int
@@ -81,8 +86,13 @@ function format_uptime(?int $secs): string
 
 // ─── Статистика TUN-интерфейса через ifconfig ─────────────────────────────────
 $ifOut = [];
-exec('/sbin/ifconfig ' . escapeshellarg($tunIface) . ' 2>/dev/null', $ifOut, $ifRc);
-$ifconfig = implode("\n", $ifOut);
+$ifRc = 1;
+$ifconfig = '';
+// v4.4.0: driver off / пустое имя — ifconfig не зовём вовсе
+if (!$tunDriverOff && $tunIface !== '') {
+    exec('/sbin/ifconfig ' . escapeshellarg($tunIface) . ' 2>/dev/null', $ifOut, $ifRc);
+    $ifconfig = implode("\n", $ifOut);
+}
 
 // Парсим ключевые поля
 $tunIp     = '';
@@ -166,7 +176,7 @@ $tunDriver = $instArr !== null ? (string)$instArr['tun_driver'] : '';
 if ($tunDriver === '') {
     $tunDriver = 'tun2socks';
 }
-if ($tunDriver === 'xray') {
+if ($tunDriver === 'xray' || $tunDriver === 'off') {
     $t2sUptimeSecs = null;
 }
 
@@ -262,7 +272,7 @@ function format_bytes(int $bytes): string
 $result = [
     'tun_interface' => $tunIface,
     'tun_driver'    => $tunDriver,
-    'tun_status'    => $tunIface !== '' ? $tunStatus : 'no interface configured',
+    'tun_status'    => $tunDriverOff ? 'off' : ($tunIface !== '' ? $tunStatus : 'no interface configured'),
     'tun_ip'        => $tunIp ? ($tunIp . $tunMask) : '',
     'mtu'           => $mtu,
     'bytes_in'      => $bytesIn,

@@ -143,7 +143,7 @@ Refresh browser (`Ctrl+F5`) → **VPN → Xray**
      - *Server group* — pick a group and the active server (or enable Load Balancing to use all of them)
      - *Server only* — no upstream: pure incoming proxy (see Server Inbound below)
      - *Custom full config (Raw JSON)* — the entire `config.json` in a highlighted editor; **Validate Config** checks the draft via `xray -test`, **Format** pretty-prints it
-   - **TUN Driver** — `Xray TUN inbound (native)` (default for new instances; interface must be `tunN` on FreeBSD) or `tun2socks (legacy)`
+   - **TUN Driver** — `Xray TUN inbound (native)` (default for new instances; interface must be `tunN` on FreeBSD), `tun2socks (legacy)`, or `Off (no TUN)` — no interface and no traffic capture: the instance only serves its inbounds (SOCKS5 / server inbound for incoming clients / custom inbounds), e.g. a pure entry-point box. At least one inbound must stay enabled
    - **Preview Generated Config** (footer, wizard modes) — shows exactly what will be written to `/usr/local/etc/xray-core/`
 2. **Routing** tab → add rules (per instance): match by domain / ip / port / sourcePort / network / inboundTag / **geoip** / **geosite** → action proxy / balancer / direct / block
 3. **General** tab → check **Enable Xray** (and **Enable Watchdog** if desired)

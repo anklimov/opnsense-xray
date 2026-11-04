@@ -143,7 +143,7 @@ configctl xray version
      - *Server group* — выбери группу и активный сервер (или включи Load Balancing, чтобы использовать все)
      - *Server only* — без upstream: чистый входящий прокси (см. Серверный inbound ниже)
      - *Custom full config (Raw JSON)* — весь `config.json` в редакторе с подсветкой; **Validate Config** проверяет черновик через `xray -test`, **Format** форматирует
-   - **TUN Driver** — `Xray TUN inbound (native)` (дефолт для новых инстансов; на FreeBSD имя должно быть `tunN`) или `tun2socks (legacy)`
+   - **TUN Driver** — `Xray TUN inbound (native)` (дефолт для новых инстансов; на FreeBSD имя должно быть `tunN`), `tun2socks (legacy)` или `Off (no TUN)` — без интерфейса и захвата трафика: инстанс только обслуживает свои inbound'ы (SOCKS5 / серверный inbound для входящих клиентов / кастомные), например чистая точка входа. Хотя бы один inbound должен остаться включённым
    - **Preview Generated Config** (footer, wizard-режимы) — показывает, что именно будет записано в `/usr/local/etc/xray-core/`
 2. Вкладка **Routing** → добавь правила (per instance): условия domain / ip / port / sourcePort / network / inboundTag / **geoip** / **geosite** → действия proxy / balancer / direct / block
 3. Вкладка **General** → установи галку **Enable Xray** (и **Enable Watchdog** по желанию)

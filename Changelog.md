@@ -5,6 +5,14 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.4.0] — 2026-11-05 (fork)
+
+### Added
+- **TUN Driver: `Off (no TUN)`** — третий вариант в селекторе драйвера: без TUN-интерфейса и захвата трафика, инстанс только обслуживает свои inbound'ы (SOCKS5 / серверный inbound / кастомные) — чистая точка входа. При Off диалог прячет поля TUN-деталей, syshook не ждёт интерфейс, watchdog проверяет только xray-core, ifstats показывает `tun_status: off`, строка tun2socks в диагностике скрыта
+- Guard пустых inbounds в `buildInbounds()`: TUN Off + всё выключено → понятная ошибка вместо молчаливого простаивающего xray-core (ловушка тестовой фикстуры tun2socks-без-SOCKS тоже поймана)
+
+---
+
 ## [4.3.0] — 2026-11-05 (fork)
 
 ### Added

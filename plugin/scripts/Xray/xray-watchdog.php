@@ -82,7 +82,9 @@ foreach ($instances->instance as $inst) {
     // v4.0.0: tun2socks-проверка — только для legacy-драйвера;
     // xray-драйверу достаточно xray-core (TUN живёт внутри процесса)
     $driver    = ((string)($inst->tun_driver ?? '') !== '') ? (string)$inst->tun_driver : 'tun2socks';
-    $legacyTun = $driver !== 'xray';
+    // v4.4.0: tun2socks-процесс есть ТОЛЬКО у legacy-драйвера ('off' и 'xray'
+    // обходятся одним xray-core)
+    $legacyTun = $driver === 'tun2socks';
 
     $xrayPid = "/var/run/xray_core_{$inst_uuid}.pid";
     $t2sPid  = "/var/run/tun2socks_{$inst_uuid}.pid";

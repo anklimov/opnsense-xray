@@ -88,6 +88,7 @@
                 <OptionValues>
                     <xray>Xray TUN inbound (native)</xray>
                     <tun2socks>tun2socks (legacy)</tun2socks>
+                    <off>Off (no TUN)</off>
                 </OptionValues>
             </tun_driver>
             <tun_interface type="TextField">

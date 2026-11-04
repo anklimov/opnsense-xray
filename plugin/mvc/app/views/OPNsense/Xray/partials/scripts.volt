@@ -740,9 +740,10 @@
             xraySection('srv_enabled').toggle(!raw);
             xraySection('loglevel').toggle(!raw);
             // TUN-секция остаётся (tun_driver — поведенческий выбор и для raw),
-            // но детали интерфейса скрыты
-            $('[id="instance.tun_interface"]').closest('tr').toggle(!raw);
-            $('[id="instance.mtu"]').closest('tr').toggle(!raw);
+            // но детали интерфейса скрыты; v4.4.0: при driver=off их тоже прячем
+            var drvEarly = $('[id="instance.tun_driver"]').val() || 'xray';
+            $('[id="instance.tun_interface"]').closest('tr').toggle(!raw && drvEarly !== 'off');
+            $('[id="instance.mtu"]').closest('tr').toggle(!raw && drvEarly !== 'off');
 
             // 1. Источник узла
             $('[id="instance.outbound_config"]').closest('tr').toggle(mode === 'config');
@@ -1391,7 +1392,7 @@
 
                 // v4.0.0: environment
                 $('#diag_tun_driver').text(data.tun_driver || '\u2014');
-                $('#diag_t2s_row').toggle(data.tun_driver !== 'xray');
+                $('#diag_t2s_row').toggle(data.tun_driver === 'tun2socks');
                 $('#diag_xray_version').text(data.xray_version || '\u2014');
                 $('#diag_xray_ver_warn').toggle(data.xray_native_tun_ok !== 1);
                 var geo = '\u2014';
