@@ -1,0 +1,2 @@
+CodeMirror 5.65.16 (MIT License) - https://codemirror.net
+Copyright (C) 2017 by Marijn Haverbeke

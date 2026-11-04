@@ -5,6 +5,36 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.0.0] — 2026-11-04 (fork)
+
+Крупный релиз: нативные механизмы Xray-core вместо внешних демонов.
+
+### Added
+- **Нативный TUN inbound** — новый per-instance переключатель `tun_driver`: `xray` (интерфейс создаёт сам xray-core, `"protocol": "tun"`, схема v26.x: `name`/`mtu`/`gateway`; на FreeBSD имя обязано быть `tunN`) или `tun2socks` (legacy). Схемы сверены с upstream: `tun_freebsd.go`, PR #6691/#7123/#7130
+- **Полный туннель** — `tun_auto_routing = full`: `autoSystemRoutingTable: ["0.0.0.0/0"]` + `autoOutboundsInterface: "auto"` (escape FIB, требует `net.fibs=2`) + опциональный `autoSystemDnsToGateway` (resolvconf); в Diagnostics — значение `net.fibs`
+- **Правила маршрутизации движка** — новая модель `OPNsense\Xray\RoutingRule` (`//OPNsense/xray/routing_rules`), вкладка **Routing**: условия domain / ip / port / sourcePort / network / inboundTag / **geoip** / **geosite** → действия proxy / balancer / direct / block; install.sh ставит `geoip.dat`/`geosite.dat`; старый `bypass_networks` мигрирует в правило
+- **Балансировка и observatory** — `lb_enabled` + `lb_strategy` (leastPing / roundRobin / leastLoad / random — подтверждено по `app/router/config.go`), члены — все серверы выбранной группы либо список `lb_custom`; генерируются `routing.balancers` + `burstObservatory` (pingConfig) + catch-all правило; `fallbackTag` = первый узел
+- **Серверный inbound (VLESS)** — движок как входящий прокси: ws (за nginx) / grpc / h2 / tcp, security none (TLS на nginx) / tls / reality; пользователи JSON + кнопка «Add user» с генерацией UUID; произвольные inbound'ы через `srv_custom_inbounds`; `srv_default_outbound` (правило inboundTag после пользовательских); генератор nginx-сниппетов (WS/gRPC/stream)
+- **Raw JSON режим** — `node_source = raw`: полный `config.json` в CodeMirror-редакторе (бандл в `/js/xray/`), кнопка **Validate Config** валидирует черновик через `xray -test` (endpoint `validateConfig` + configd-действие `validatefile` с белым списком `/tmp/xray-val-*`), кнопка **Format**
+- **Preview Generated Config** — `POST api/xray/service/previewConfig/<uuid>` собирает конфиг в процессе (ConfigBuilder) и показывает в модалке; configd-действие `generate` — для CLI
+- **DNS hijack** — `dns_mode = hijack`: dns-модуль + `dns-out` outbound + правило `inboundTag(tun-in) port 53 → dns-out` (подтверждено: FakeIP в Xray-core отсутствует — dns.go)
+- **ConfigBuilder** (`mvc/app/library/OPNsense/Xray/ConfigBuilder.php`) — единая точка генерации конфига: сборка inbounds (socks5 опционален через `socks5_enabled`, tun, vless-in, custom), outbounds (proxy-N/direct/block/dns-out), routing (порядок: dns-hijack → пользовательские → private→direct → vless-in default → catch-all), dns, burstObservatory; строгие ошибки конфигурации (несовместимость портов, `tunN` для xray-драйвера, action=balancer без LB и т.п.); `node_source` расширен до `config|group|none|raw`
+- **Диагностика окружения** — версия xray (< 26.10 → предупреждение), наличие geo-данных, `net.fibs`, слушающие порты инстанса (sockstat), статус TUN-интерфейса вместо tun2socks для xray-драйвера
+
+### Changed
+- `xray-service-control.php`: конфиг собирается через ConfigBuilder (двойная логика `xray_write_config`/`validate` устранена); `do_start` не трогает tun2socks при `tun_driver=xray`; `do_stop` принудительно уничтожает TUN после SIGKILL; статус отдаёт `tun`/`driver` ключи; watchdog проверяет t2s только у legacy-инстансов
+- `xray_configure_do()` (boot) делегирует скрипту `xray-service-control.php start` вместо дублирования логики daemon(8)
+- syshook `50-xray`: для xray-драйвера ждёт интерфейс и адрес (IP назначает xray, gw+1), для tun2socks — прежнее назначение IP из OPNsense
+- `install.sh`: минимальная версия xray-core **26.10** (автообновление из latest release), tun2socks опционален, установка web-ассетов и geo-дат, миграция v3.x → v4.0.0 (`bypass_networks` → правило RoutingRule, `tun_driver=tun2socks` для существующих, дефолты новых полей)
+- Экземпляр по умолчанию: `tun_interface = tun100`, `tun_gateway = 10.255.0.1/30` (static IP OPNsense = gw+1 = `10.255.0.2/30`)
+
+### Compatibility
+- Существующие инстансы после миграции работают как раньше (tun2socks-драйвер, прежнее имя интерфейса); переключение на нативный TUN — вручную в диалоге (интерфейс переименовать в `tunN`)
+- `node_source` пустой со выбранным сервером трактуется как `group` (наследие v3.1.0), как и раньше
+- Удаление вручную: `//OPNsense/xray/routing_rules` из config.xml при откате
+
+---
+
 ## [3.2.1] — 2026-09-23 (fork)
 
 ### Fixed

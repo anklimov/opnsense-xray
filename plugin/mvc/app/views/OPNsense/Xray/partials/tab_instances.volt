@@ -10,7 +10,7 @@
                 {# Status badges #}
                 <div>
                     <span id="badge_xray" class="label label-default">xray-core: ...</span>
-                    <span id="badge_tun"  class="label label-default">tun2socks: ...</span>
+                    <span id="badge_tun"  class="label label-default">tun: ...</span>
                 </div>
 
                 <div style="width: 1px; height: 22px; background: #ddd;"></div>
@@ -64,6 +64,11 @@
 
                         <th data-column-id="name"
                             data-type="string">{{ lang._('Name') }}</th>
+
+                        <th data-column-id="node_source"
+                            data-type="string"
+                            data-formatter="modeLabel"
+                            data-width="8em">{{ lang._('Mode') }}</th>
 
                         <th data-column-id="server_address"
                             data-type="string">{{ lang._('Server') }}</th>

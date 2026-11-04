@@ -35,6 +35,13 @@
             <pattern>api/xray/group/*</pattern>
         </patterns>
     </acl_xray_group>
+    <acl_xray_rule>
+        <n>Xray: Routing rules</n>
+        <description>Allow access to Xray routing rules (domain/ip/port/geoip/geosite)</description>
+        <patterns>
+            <pattern>api/xray/rule/*</pattern>
+        </patterns>
+    </acl_xray_rule>
     <acl_xray_ui>
         <n>Xray: Web UI</n>
         <description>Allow access to the Xray management page (VPN → Xray)</description>

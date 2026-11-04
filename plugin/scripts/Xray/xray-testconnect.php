@@ -33,6 +33,14 @@ if ($ins) {
 $listen = (string)($inst->socks5_listen ?? '127.0.0.1') ?: '127.0.0.1';
 $port   = (int)(string)($inst->socks5_port ?? 10808);
 
+// v4.0.0: socks-inbound мог быть отключён (серверный/TUN-режим)
+$socksEnabled = (string)($inst->socks5_enabled ?? '1');
+if ($socksEnabled !== '1') {
+    echo "0\n";
+    fwrite(STDERR, "SOCKS5 inbound is disabled for this instance\n");
+    exit(1);
+}
+
 // Защита: порт должен быть в допустимом диапазоне
 if ($port < 1 || $port > 65535) {
     $port = 10808;

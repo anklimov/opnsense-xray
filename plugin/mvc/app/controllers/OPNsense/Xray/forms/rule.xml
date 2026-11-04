@@ -1,0 +1,47 @@
+<form>
+    <field>
+        <type>header</type>
+        <label>Routing Rule</label>
+    </field>
+    <field>
+        <id>rule.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <help>Disabled rules are kept but not included in the generated config.</help>
+    </field>
+    <field>
+        <id>rule.instance</id>
+        <label>Instance</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>The xray instance this rule applies to.</help>
+    </field>
+    <field>
+        <id>rule.name</id>
+        <label>Name</label>
+        <type>text</type>
+        <help>Optional description for the rules grid.</help>
+        <hint>e.g. block ads, corporate direct</hint>
+    </field>
+    <field>
+        <id>rule.type</id>
+        <label>Match</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>What to match on. domain — plain/keyword:/regexp:/full: patterns. ip — CIDR list. port / sourcePort — numbers and ranges like 80,443,1000-2000. network — tcp, udp or tcp,udp. inboundTag — traffic of a specific inbound (tun-in, socks-in, vless-in). geoip / geosite — lists from geoip.dat / geosite.dat (files are installed by install.sh into /usr/local/etc/xray-core/).</help>
+    </field>
+    <field>
+        <id>rule.value</id>
+        <label>Value</label>
+        <type>text</type>
+        <help>Comma-separated values. For geoip/geosite the geoip:/geosite: prefix is added automatically if omitted.</help>
+        <hint>Examples: "google.com, full:example.org" (domain) · "10.0.0.0/8" (ip) · "private, cn" (geoip) · "category-ads-all" (geosite) · "tun-in" (inboundTag) · "80,443" (port)</hint>
+    </field>
+    <field>
+        <id>rule.action</id>
+        <label>Action</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>proxy — the upstream node (or balancer when enabled). balancer — the balancer only (requires Load Balancing). direct — bypass via freedom. block — blackhole.</help>
+    </field>
+</form>

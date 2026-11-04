@@ -18,16 +18,16 @@
     </field>
     <field>
         <id>instance.node_source</id>
-        <label>Node Source</label>
+        <label>Config Source</label>
         <type>dropdown</type>
         <style>selectpicker</style>
-        <help>Where this instance takes its node from. "Xray config (JSON)" — the outbound JSON below (paste it or fill it from a VLESS link). "Server group" — one server of a group managed on the Groups tab; the JSON field is then unused.</help>
+        <help>Where the xray-core config comes from. "Xray config (JSON)" — the outbound JSON below, the backend wraps it with TUN/SOCKS/routing sections. "Server group" — one server of a group (or, with Load Balancing, all servers of the group). "Server only" — no upstream: the instance just accepts incoming connections (see Server Inbound). "Custom full config" — the entire config.json below is used verbatim.</help>
     </field>
     <field>
         <id>instance.outbound_config</id>
         <label>Outbound Config (JSON)</label>
         <type>textbox</type>
-        <help>xray-core outbound object. Use "Import VLESS link" above to auto-fill, or paste/write the outbound JSON directly. The backend wraps it with SOCKS5 inbound and routing on save.</help>
+        <help>xray-core outbound object (Config Source = Xray config). Use "Import VLESS link" above to auto-fill, or paste/write the outbound JSON directly.</help>
         <hint>{"tag":"proxy","protocol":"vless","settings":{...},"streamSettings":{...}}</hint>
     </field>
     <field>
@@ -35,40 +35,47 @@
         <label>Server Group</label>
         <type>dropdown</type>
         <style>selectpicker</style>
-        <help>Group to pick the active node from. Groups and their servers are managed on the Groups tab.</help>
+        <help>Group to pick the node from. With Load Balancing enabled, ALL servers of this group become balancer members. Managed on the Groups tab.</help>
     </field>
     <field>
         <id>instance.server</id>
         <label>Server</label>
         <type>dropdown</type>
         <style>selectpicker</style>
-        <help>Active node, one of the selected group. Changing it rewrites config.json and restarts this instance only — firewall rules, gateway, NAT and the TUN interface are untouched.</help>
+        <help>Active node of the selected group (used when Load Balancing is off). Changing it rewrites config.json and restarts this instance only.</help>
+    </field>
+    <field>
+        <id>instance.full_config</id>
+        <label>Full Config (Raw JSON)</label>
+        <type>textbox</type>
+        <help>Full xray-core config.json used verbatim (Config Source = Custom full config). Validate the draft with the "Validate Config" button before saving. Note: with the tun2socks legacy TUN driver the config must contain a SOCKS inbound at the configured port.</help>
+        <hint>{"log":{...},"inbounds":[...],"outbounds":[...],"routing":{...}}</hint>
     </field>
 
     <field>
         <type>header</type>
-        <label>Tunnel (tun2socks)</label>
+        <label>TUN (traffic capture)</label>
     </field>
     <field>
-        <id>instance.socks5_listen</id>
-        <label>SOCKS5 Listen Address</label>
-        <type>text</type>
-        <help>IP address xray-core binds for its SOCKS5 inbound. tun2socks connects here to forward all TUN traffic through the proxy. Use 127.0.0.1 (loopback, recommended), 0.0.0.0 (all interfaces), or any IP assigned to a real OPNsense interface (e.g. 192.168.1.1). Other 127.x.x.x addresses require a manual lo0 alias on FreeBSD and are not recommended.</help>
-        <hint>e.g. 127.0.0.1 or 0.0.0.0</hint>
-    </field>
-    <field>
-        <id>instance.socks5_port</id>
-        <label>SOCKS5 Port</label>
-        <type>text</type>
-        <help>Local loopback port xray-core binds for SOCKS5 inbound</help>
-        <hint>Default: 10808. tun2socks connects here to forward TUN traffic. Must not be used by another process.</hint>
+        <id>instance.tun_driver</id>
+        <label>TUN Driver</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>"Xray TUN inbound (native)" — the TUN interface is created by xray-core itself (protocol "tun", requires xray-core 26.10+; on FreeBSD the interface name must be tunN). "tun2socks (legacy)" — the external tun2socks daemon forwarding the TUN to the SOCKS inbound.</help>
     </field>
     <field>
         <id>instance.tun_interface</id>
         <label>TUN Interface</label>
         <type>text</type>
-        <help>Virtual network interface created by tun2socks</help>
-        <hint>Default: proxytun2socks0. Must match the name in Interfaces → Assignments.</hint>
+        <help>TUN interface name. Native driver on FreeBSD: must match tunN, e.g. tun100. Must match the name in Interfaces → Assignments.</help>
+        <hint>tun100</hint>
+    </field>
+    <field>
+        <id>instance.tun_gateway</id>
+        <label>TUN Gateway (CIDR)</label>
+        <type>text</type>
+        <help>On FreeBSD xray assigns the interface the address right after the gateway (e.g. 10.255.0.1/30 → interface gets 10.255.0.2/30); the gateway itself is routed into the TUN. Use it as the OPNsense "Far Gateway" and set the interface static IP to gateway+1 with the same mask.</help>
+        <hint>10.255.0.1/30</hint>
     </field>
     <field>
         <id>instance.mtu</id>
@@ -78,15 +85,215 @@
         <hint>Default: 1500. Reduce to 1380 if large packets (e.g. SSH, large downloads) fail or are slow.</hint>
     </field>
     <field>
-        <type>header</type>
-        <label>Routing</label>
+        <id>instance.tun_auto_routing</id>
+        <label>System Routing</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>"Off" — choose what goes through the tunnel with OPNsense firewall rules and the TUN gateway (selective). "Full tunnel" — xray itself installs the system default route (minus protected ranges) and keeps its own connections out of the TUN via a second routing table; requires net.fibs=2 in /boot/loader.conf and a reboot. No OPNsense gateway needed in this mode.</help>
     </field>
     <field>
-        <id>instance.bypass_networks</id>
-        <label>Bypass Networks</label>
+        <id>instance.tun_auto_dns</id>
+        <label>System DNS → TUN (full mode)</label>
+        <type>checkbox</type>
+        <help>Only for Full tunnel: hand the router's own resolver (resolvconf) to the TUN gateway so local lookups go through Xray. Do not combine with unbound DNSSEC validation. Requires the DNS hijack rule (generated automatically).</help>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>SOCKS5 Inbound</label>
+    </field>
+    <field>
+        <id>instance.socks5_enabled</id>
+        <label>Enable SOCKS5</label>
+        <type>checkbox</type>
+        <help>Local SOCKS5 inbound. Used by the legacy tun2socks driver, by "Test connection" and by local applications (e.g. curl --socks5). Can be disabled for pure TUN or pure server-mode instances.</help>
+    </field>
+    <field>
+        <id>instance.socks5_listen</id>
+        <label>SOCKS5 Listen Address</label>
         <type>text</type>
-        <help>Comma-separated list of CIDR networks that should bypass the VPN tunnel and go direct. These networks will be routed via the 'direct' (freedom) outbound instead of the proxy.</help>
-        <hint>Default: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16. Add your own networks or IPs (e.g. 100.64.0.0/10,203.0.113.5/32)</hint>
+        <help>IP address xray-core binds for its SOCKS5 inbound.</help>
+        <hint>e.g. 127.0.0.1 or 0.0.0.0</hint>
+    </field>
+    <field>
+        <id>instance.socks5_port</id>
+        <label>SOCKS5 Port</label>
+        <type>text</type>
+        <help>Local port xray-core binds for its SOCKS5 inbound</help>
+        <hint>Default: 10808. Must not be used by another process or the server inbound.</hint>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>DNS</label>
+    </field>
+    <field>
+        <id>instance.dns_mode</id>
+        <label>DNS Mode</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>"Hijack" — DNS queries (port 53) entering the tunnel are answered by Xray itself using the upstream below and leave through the proxy (no DNS leak for full tunnel). "Off" — no dns block; OPNsense/unbound keeps handling DNS.</help>
+    </field>
+    <field>
+        <id>instance.dns_upstream</id>
+        <label>DNS Upstream</label>
+        <type>text</type>
+        <help>Nameserver used by the built-in DNS (hijack mode).</help>
+        <hint>Default: 1.1.1.1</hint>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Load Balancing</label>
+    </field>
+    <field>
+        <id>instance.lb_enabled</id>
+        <label>Enable Balancer</label>
+        <type>checkbox</type>
+        <help>Route proxied traffic through a balancer with background health checks (burstObservatory). Members: all servers of the selected group (Config Source = Server group) or the custom list below. Unmatched traffic uses the balancer too.</help>
+    </field>
+    <field>
+        <id>instance.lb_strategy</id>
+        <label>Strategy</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>leastPing — pick the lowest latency alive node. roundRobin — rotate over alive nodes. leastLoad — combine latency, jitter and loss (advanced settings via raw JSON). random — random alive node.</help>
+    </field>
+    <field>
+        <id>instance.lb_probe_url</id>
+        <label>Probe URL</label>
+        <type>text</type>
+        <help>URL used for the background health checks of the balancer.</help>
+        <hint>Default: https://connectivitycheck.gstatic.com/generate_204</hint>
+    </field>
+    <field>
+        <id>instance.lb_probe_interval</id>
+        <label>Probe Interval</label>
+        <type>text</type>
+        <help>Health check interval (Go duration, e.g. 30s, 1m, 5m).</help>
+        <hint>Default: 1m</hint>
+    </field>
+    <field>
+        <id>instance.lb_custom</id>
+        <label>Custom Outbound List (JSON)</label>
+        <type>textbox</type>
+        <help>Used with Load Balancing when Config Source = Xray config: JSON array of outbound objects, each becomes a balancer member. Ignored in group mode.</help>
+        <hint>[{"protocol":"vless","settings":{...},"streamSettings":{...}}, ...]</hint>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Server Inbound (VLESS)</label>
+    </field>
+    <field>
+        <id>instance.srv_enabled</id>
+        <label>Enable Incoming VLESS</label>
+        <type>checkbox</type>
+        <help>Accept incoming proxy connections (the engine works as a VLESS server), e.g. fronted by nginx. Combine with routing rules on inboundTag "vless-in" for per-domain routing of incoming clients.</help>
+    </field>
+    <field>
+        <id>instance.srv_listen</id>
+        <label>Listen Address</label>
+        <type>text</type>
+        <help>127.0.0.1 when fronted by nginx on this box; 0.0.0.0 or a WAN/LAN IP for direct exposure.</help>
+        <hint>Default: 127.0.0.1</hint>
+    </field>
+    <field>
+        <id>instance.srv_port</id>
+        <label>Listen Port</label>
+        <type>text</type>
+        <help>Port for the incoming VLESS inbound (nginx forwards here). Must differ from the SOCKS5 port.</help>
+        <hint>Default: 10086</hint>
+    </field>
+    <field>
+        <id>instance.srv_users</id>
+        <label>Users (JSON)</label>
+        <type>textbox</type>
+        <help>Clients allowed to connect: [{"id":"&lt;uuid&gt;","email":"user1","flow":""}]. Use the "Add user" button below the editor to append a generated UUID.</help>
+        <hint>[{"id":"b831381d-6324-4d53-ad4f-8cda48b30811","email":"user1"}]</hint>
+    </field>
+    <field>
+        <id>instance.srv_transport</id>
+        <label>Transport</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>WebSocket is the usual choice behind an nginx reverse proxy; gRPC also works behind nginx (grpc_pass); TCP/HTTP2 for direct exposure.</help>
+    </field>
+    <field>
+        <id>instance.srv_path</id>
+        <label>Path / Service Name</label>
+        <type>text</type>
+        <help>WebSocket path or gRPC serviceName (h2 path). Must match the nginx location.</help>
+        <hint>Default: /vless</hint>
+    </field>
+    <field>
+        <id>instance.srv_security</id>
+        <label>Security</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>"None" — TLS is terminated by nginx in front (recommended). "TLS" — xray terminates TLS itself with the certificate files below. "Reality" — direct exposure without nginx (TCP only).</help>
+    </field>
+    <field>
+        <id>instance.srv_tls_cert</id>
+        <label>TLS Certificate File</label>
+        <type>text</type>
+        <help>Absolute path to the certificate (PEM), e.g. from the ACME plugin. Used with Security = TLS.</help>
+        <hint>/var/etc/acme/certs/cert.pem</hint>
+    </field>
+    <field>
+        <id>instance.srv_tls_key</id>
+        <label>TLS Key File</label>
+        <type>text</type>
+        <help>Absolute path to the private key (PEM). Used with Security = TLS.</help>
+    </field>
+    <field>
+        <id>instance.srv_reality_privatekey</id>
+        <label>Reality Private Key</label>
+        <type>text</type>
+        <help>x25519 private key (base64) for the Reality server. Generate with: xray-core x25519.</help>
+    </field>
+    <field>
+        <id>instance.srv_reality_shortids</id>
+        <label>Reality Short IDs</label>
+        <type>text</type>
+        <help>Comma-separated hex short IDs allowed for clients, e.g. "" (empty allowed), abcdef01.</help>
+    </field>
+    <field>
+        <id>instance.srv_reality_servernames</id>
+        <label>Reality Server Names</label>
+        <type>text</type>
+        <help>Comma-separated SNI values clients may use.</help>
+    </field>
+    <field>
+        <id>instance.srv_reality_dest</id>
+        <label>Reality Dest (fallback)</label>
+        <type>text</type>
+        <help>Fallback target for non-Reality handshakes, e.g. example.com:443. Required with Reality.</help>
+    </field>
+    <field>
+        <id>instance.srv_accept_proxy_protocol</id>
+        <label>Accept PROXY Protocol</label>
+        <type>checkbox</type>
+        <help>Enable when nginx forwards with proxy_protocol on (stream or http). Keeps the real client IP.</help>
+    </field>
+    <field>
+        <id>instance.srv_custom_inbounds</id>
+        <label>Additional Inbounds (JSON)</label>
+        <type>textbox</type>
+        <help>JSON array of arbitrary xray inbound objects merged into the config (vmess, trojan, shadowsocks, dokodemo-door, another vless, ...). Each object needs a unique "tag".</help>
+        <hint>[{"tag":"vmess-in","listen":"127.0.0.1","port":10087,"protocol":"vmess","settings":{...}}]</hint>
+    </field>
+    <field>
+        <id>instance.srv_default_outbound</id>
+        <label>Incoming Traffic Default</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>Where traffic of incoming clients goes when no routing rule matches it (rules on inboundTag "vless-in" take precedence). "proxy" chains incoming users through the upstream; with Load Balancing it goes through the balancer.</help>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Misc</label>
     </field>
     <field>
         <id>instance.loglevel</id>

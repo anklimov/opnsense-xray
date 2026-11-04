@@ -11,13 +11,23 @@ class InstanceController extends ApiMutableModelControllerBase
 
     public function searchItemAction()
     {
-        $response = $this->searchBase('instance', ['enabled', 'name', 'outbound_config', 'node_source', 'server']);
+        $response = $this->searchBase('instance', ['enabled', 'name', 'outbound_config', 'node_source', 'server', 'tun_driver']);
         if (!empty($response['rows'])) {
             // v3.2.0: в режиме group узел живёт в модели групп, а не в outbound_config
             $servers = null;
             foreach ($response['rows'] as &$row) {
+                $mode = (string)($row['node_source'] ?? 'config');
+                $row['server_address'] = '';
+                $row['server_port']    = '';
+
+                if ($mode === 'raw' || $mode === 'none') {
+                    // v4.0.0: raw — полный кастомный конфиг; none — только сервер
+                    $row['server_address'] = $mode === 'raw' ? '(raw config)' : '(server mode)';
+                    unset($row['outbound_config'], $row['server']);
+                    continue;
+                }
+
                 $raw = $row['outbound_config'] ?? '';
-                $mode = (string)($row['node_source'] ?? '');
                 $server = (string)($row['server'] ?? '');
                 if ($server !== '' && $mode !== 'config') {
                     if ($servers === null) {
@@ -33,7 +43,7 @@ class InstanceController extends ApiMutableModelControllerBase
                 $vnext = $ob['settings']['vnext'][0] ?? [];
                 $row['server_address'] = $vnext['address'] ?? '';
                 $row['server_port']    = isset($vnext['port']) ? (string)$vnext['port'] : '';
-                unset($row['outbound_config'], $row['node_source'], $row['server']);
+                unset($row['outbound_config'], $row['server']);
             }
             unset($row);
         }

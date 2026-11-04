@@ -71,13 +71,49 @@
                             <th>{{ lang._('xray-core Uptime') }}</th>
                             <td id="diag_xray_uptime">&mdash;</td>
                         </tr>
-                        <tr>
+                        <tr id="diag_t2s_row">
                             <th>{{ lang._('tun2socks Uptime') }}</th>
                             <td id="diag_t2s_uptime">&mdash;</td>
                         </tr>
                         <tr>
                             <th>{{ lang._('Server Ping RTT') }}</th>
                             <td id="diag_ping_rtt">&mdash;</td>
+                        </tr>
+                        <tr>
+                            <th>{{ lang._('Listening Ports') }}</th>
+                            <td id="diag_ports">&mdash;</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                {# ── Environment ─────────────────────────────────────────── #}
+                <table class="table table-condensed table-striped" style="max-width: 600px; margin-top: 10px;">
+                    <tbody>
+                        <tr>
+                            <th style="width: 220px;">{{ lang._('xray-core Version') }}</th>
+                            <td>
+                                <span id="diag_xray_version">&mdash;</span>
+                                <span id="diag_xray_ver_warn" class="label label-warning" style="display:none; margin-left: 6px;">
+                                    {{ lang._('native TUN needs 26.10+') }}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>{{ lang._('TUN Driver') }}</th>
+                            <td id="diag_tun_driver">&mdash;</td>
+                        </tr>
+                        <tr>
+                            <th>{{ lang._('GeoIP / GeoSite data') }}</th>
+                            <td id="diag_geodata">&mdash;</td>
+                        </tr>
+                        <tr>
+                            <th>{{ lang._('net.fibs') }}</th>
+                            <td>
+                                <span id="diag_net_fibs">&mdash;</span>
+                                <span id="diag_fibs_warn" class="label label-warning" style="display:none; margin-left: 6px;">
+                                    {{ lang._('full tunnel needs 2 (add net.fibs=2 to /boot/loader.conf and reboot)') }}
+                                </span>
+                            </td>
                         </tr>
                     </tbody>
                 </table>

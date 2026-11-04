@@ -182,6 +182,77 @@ class ServiceController extends ApiMutableServiceControllerBase
     }
 
     /**
+     * v4.0.0: POST /api/xray/service/validateConfig — валидация ЧЕРНОВИКА
+     * полного config.json из редактора Raw JSON (не сохранённого конфига).
+     * Тело: {"config": "<json-текст>"}. Файл кладётся в /tmp/xray-val-*
+     * и проверяется через configd action "xray validatefile".
+     */
+    public function validateConfigAction()
+    {
+        if (!$this->request->isPost()) {
+            return ['result' => 'failed', 'message' => 'POST required'];
+        }
+
+        $rawBody = file_get_contents('php://input');
+        $data = json_decode($rawBody, true);
+        $draft = is_array($data) ? (string)($data['config'] ?? '') : '';
+        if ($draft === '') {
+            return ['result' => 'failed', 'message' => 'Config is empty'];
+        }
+
+        // Быстрая проверка синтаксиса до похода в configd
+        if (json_decode($draft, true) === null && json_last_error() !== JSON_ERROR_NONE) {
+            return ['result' => 'failed', 'message' => 'Invalid JSON: ' . json_last_error_msg()];
+        }
+
+        $path = tempnam('/tmp', 'xray-val-');
+        if ($path === false) {
+            return ['result' => 'failed', 'message' => 'Cannot create temp file'];
+        }
+        file_put_contents($path, $draft);
+        chmod($path, 0600);
+
+        try {
+            $backend = new Backend();
+            $output  = trim($backend->configdRun('xray validatefile ' . $path));
+        } finally {
+            @unlink($path);
+        }
+
+        $ok = stripos($output, 'OK')    !== false
+           && stripos($output, 'ERROR') === false;
+        return [
+            'result'  => $ok ? 'ok' : 'failed',
+            'message' => $output ?: 'No response from configd',
+        ];
+    }
+
+    /**
+     * v4.0.0: POST /api/xray/service/previewConfig/{uuid} — сгенерированный
+     * config.json инстанса (кнопка Preview Generated Config). Сборка
+     * происходит в процессе через ConfigBuilder, без смены файла на диске.
+     */
+    public function previewConfigAction($uuid = '')
+    {
+        if (!$this->request->isPost()) {
+            return ['result' => 'failed', 'message' => 'POST required'];
+        }
+        $uuid = $this->sanitizeUuid((string)$uuid);
+        if ($uuid === '') {
+            return ['result' => 'failed', 'message' => 'Instance UUID required'];
+        }
+        try {
+            $config = \OPNsense\Xray\ConfigBuilder::buildForInstance($uuid);
+            return [
+                'result' => 'ok',
+                'config' => \OPNsense\Xray\ConfigBuilder::render($config),
+            ];
+        } catch (\Exception $e) {
+            return ['result' => 'failed', 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
      * GET /api/xray/service/version
      */
     public function versionAction()

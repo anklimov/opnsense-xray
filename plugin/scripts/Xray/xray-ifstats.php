@@ -152,6 +152,56 @@ if ($ifRc === 0) {
 $xrayUptimeSecs = $instUuid !== '' ? proc_uptime(xray_pid_path($instUuid)) : null;
 $t2sUptimeSecs  = $instUuid !== '' ? proc_uptime(t2s_pid_path($instUuid))  : null;
 
+// v4.0.0: драйвер TUN определяет, живёт ли tun2socks у инстанса
+$tunDriver = (string)($inst->tun_driver ?? '');
+if ($tunDriver === '') {
+    $tunDriver = 'tun2socks';
+}
+if ($tunDriver === 'xray') {
+    $t2sUptimeSecs = null;
+}
+
+// v4.0.0: диагностика окружения — версия xray-core, geo-данные, net.fibs
+$xrayVersion = 'not installed';
+if (file_exists('/usr/local/bin/xray-core')) {
+    exec('/usr/local/bin/xray-core version 2>/dev/null', $verOut);
+    $xrayVersion = trim((string)($verOut[0] ?? 'unknown'));
+}
+
+$geoipOk   = file_exists('/usr/local/etc/xray-core/geoip.dat') ? 1 : 0;
+$geositeOk = file_exists('/usr/local/etc/xray-core/geosite.dat') ? 1 : 0;
+
+$netFibs = null;
+exec('/sbin/sysctl -n net.fibs 2>/dev/null', $fibsOut, $fibsRc);
+if ($fibsRc === 0 && isset($fibsOut[0]) && ctype_digit(trim($fibsOut[0]))) {
+    $netFibs = (int)trim($fibsOut[0]);
+}
+
+// Слушающие порты инстанса (sockstat)
+$listenPorts = [];
+$portsToList = [];
+$socksEnabled = (string)($inst->socks5_enabled ?? '1') === '1';
+if ($socksEnabled) {
+    $portsToList[] = (int)(string)($inst->socks5_port ?? 10808);
+}
+if ((string)($inst->srv_enabled ?? '0') === '1') {
+    $portsToList[] = (int)(string)($inst->srv_port ?? 10086);
+}
+foreach (array_unique($portsToList) as $p) {
+    if ($p <= 0 || $p > 65535) {
+        continue;
+    }
+    exec('/usr/bin/sockstat -46l 2>/dev/null', $ssOut, $ssRc);
+    $found = false;
+    foreach ($ssOut as $line) {
+        if (preg_match('/[:.]' . $p . '\s*$/', trim($line))) {
+            $found = true;
+            break;
+        }
+    }
+    $listenPorts[] = ['port' => $p, 'listening' => $found ? 1 : 0];
+}
+
 // ─── Ping RTT до VPN-сервера ─────────────────────────────────────────────────
 // v3.2.0: адрес берётся из сервера группы, если инстанс работает в режиме group
 // (или это конфиг от v3.1.0, где режима нет, но сервер выбран).
@@ -197,6 +247,7 @@ function format_bytes(int $bytes): string
 // ─── Сборка результата ────────────────────────────────────────────────────────
 $result = [
     'tun_interface' => $tunIface,
+    'tun_driver'    => $tunDriver,
     'tun_status'    => $tunIface !== '' ? $tunStatus : 'no interface configured',
     'tun_ip'        => $tunIp ? ($tunIp . $tunMask) : '',
     'mtu'           => $mtu,
@@ -212,6 +263,12 @@ $result = [
     'tun2socks_uptime_secs' => $t2sUptimeSecs,
     'server_address'        => $serverAddr,
     'ping_rtt'              => $pingRtt,
+    'xray_version'          => $xrayVersion,
+    'xray_native_tun_ok'    => (preg_match('/Xray\s+(\d+)\./', $xrayVersion, $vm) && (int)$vm[1] >= 26) ? 1 : 0,
+    'geoip_ok'              => $geoipOk,
+    'geosite_ok'             => $geositeOk,
+    'net_fibs'              => $netFibs,
+    'listen_ports'          => $listenPorts,
 ];
 
 echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";

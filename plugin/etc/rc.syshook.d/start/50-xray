@@ -28,7 +28,6 @@ echo "enabled=[$ENABLED] inst_uuid=[$INST_UUID]"
 
 [ "$ENABLED" = "1" ] || { echo "xray disabled, exit"; exit 0; }
 [ -f "$XRAY_BIN" ]   || { echo "xray-core not found"; exit 0; }
-[ -f "$T2S_BIN" ]    || { echo "tun2socks not found"; exit 0; }
 
 # Функция: настроить TUN для одного инстанса
 setup_instance() {
@@ -43,7 +42,7 @@ setup_instance() {
         _lock_tries=$((_lock_tries+1))
     done
 
-    # Read tun_interface and mtu in one PHP call;
+    # Read tun_interface, mtu and driver in one PHP call;
     # Note: SimpleXML elements are never null, so ?? is dead code — use string check.
     _INST_INFO=$(_INST_UUID="$_INST_UUID" php -r '
         set_include_path("/usr/local/etc/inc" . PATH_SEPARATOR . get_include_path());
@@ -54,34 +53,56 @@ setup_instance() {
             if ((string)$inst["uuid"] === $uuid) {
                 $tun = (string)$inst->tun_interface;
                 $mtu = (string)$inst->mtu;
+                $drv = (string)$inst->tun_driver;
                 echo "TUN_IFACE=" . ($tun !== "" ? $tun : "proxytun2socks0") . "\n";
                 echo "MTU="       . ($mtu !== "" ? $mtu : "1500")            . "\n";
+                echo "DRIVER="    . ($drv !== "" ? $drv : "tun2socks")        . "\n";
                 exit(0);
             }
         }
         echo "TUN_IFACE=proxytun2socks0\n";
         echo "MTU=1500\n";
+        echo "DRIVER=tun2socks\n";
     ' 2>>"$LOG")
 
     eval "$_INST_INFO"
     TUN_IFACE="${TUN_IFACE:-proxytun2socks0}"
     MTU="${MTU:-1500}"
+    DRIVER="${DRIVER:-tun2socks}"
 
-    echo "[${_INST_UUID}] tun=[$TUN_IFACE] mtu=[$MTU]"
+    echo "[${_INST_UUID}] tun=[$TUN_IFACE] mtu=[$MTU] driver=[$DRIVER]"
 
-    # Ждём TUN интерфейс до 10 секунд
+    # Ждём TUN интерфейс до 15 секунд (xray создаёт его сам при старте)
     echo "waiting for $TUN_IFACE..."
     i=0
-    while [ $i -lt 10 ]; do
+    while [ $i -lt 15 ]; do
         ifconfig "$TUN_IFACE" > /dev/null 2>&1 && break
         sleep 1
         i=$((i+1))
         echo "  ${i}s..."
     done
 
-    ifconfig "$TUN_IFACE" > /dev/null 2>&1 || { echo "[${_INST_UUID}] interface $TUN_IFACE not found after 10s!"; return 0; }
+    ifconfig "$TUN_IFACE" > /dev/null 2>&1 || { echo "[${_INST_UUID}] interface $TUN_IFACE not found after 15s!"; return 0; }
 
-    # Поднимаем интерфейс и назначаем MTU
+    if [ "$DRIVER" = "xray" ]; then
+        # v4.0.0: нативный TUN inbound — xray сам назначает IP (gw+1) и MTU.
+        # Здесь только проверка: адрес на интерфейсе должен появиться.
+        j=0
+        while [ $j -lt 5 ]; do
+            _has_ip=$(ifconfig "$TUN_IFACE" 2>/dev/null | grep -c "inet ")
+            [ "$_has_ip" -gt 0 ] && break
+            sleep 1
+            j=$((j+1))
+        done
+        if [ "$_has_ip" -gt 0 ]; then
+            echo "[${_INST_UUID}] $TUN_IFACE is up with an address assigned by xray"
+        else
+            echo "[${_INST_UUID}] WARNING: $TUN_IFACE has no IP after 5s"
+        fi
+        return 0
+    fi
+
+    # legacy tun2socks: поднимаем интерфейс и назначаем MTU
     ifconfig "$TUN_IFACE" mtu "$MTU" up 2>&1
 
     # Назначаем IP из OPNsense interfaces (BUG-2 FIX: через env)

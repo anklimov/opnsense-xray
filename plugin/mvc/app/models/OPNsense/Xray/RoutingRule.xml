@@ -1,0 +1,75 @@
+<?xml version="1.0"?>
+<model>
+    <mount>//OPNsense/xray/routing_rules</mount>
+    <description>Xray routing rules</description>
+    <!-- v4.0.0: правила маршрутизации движка xray-core, привязанные к инстансу.
+         Порядок применения — порядок строк в grid (drag не поддерживается,
+         порядок задаётся последовательностью создания; при необходимости
+         пересоздайте правило). Правила встраиваются в routing.rules между
+         техническими правилами (DNS hijack / fakeip) и неявным
+         private-networks → direct. -->
+    <version>1.0.0</version>
+    <items>
+        <rule type="ArrayField">
+            <enabled type="BooleanField">
+                <Default>1</Default>
+            </enabled>
+            <instance type="ModelRelationField">
+                <Model>
+                    <instances>
+                        <source>OPNsense.Xray.Instance</source>
+                        <items>instance</items>
+                        <display>name</display>
+                    </instances>
+                </Model>
+                <Required>Y</Required>
+            </instance>
+            <name type="TextField">
+                <Required>N</Required>
+                <Default></Default>
+            </name>
+            <!-- Тип условия → поле правила xray:
+                 domain   → "domain": [values] (поддерж. префиксы full:/regexp:/keyword:)
+                 ip       → "ip": [CIDR,...]
+                 port     → "port": "80,443,1000-2000"
+                 source_port → "sourcePort"
+                 network  → "network": "tcp"/"udp"/"tcp,udp"
+                 inbound_tag → "inboundTag": [tun-in|socks-in|vless-in,...]
+                 geoip    → "ip": ["geoip:cn",...] (файл geoip.dat)
+                 geosite  → "domain": ["geosite:category-ads-all",...] (файл geosite.dat) -->
+            <type type="OptionField">
+                <Default>domain</Default>
+                <Required>Y</Required>
+                <OptionValues>
+                    <domain>domain</domain>
+                    <ip>ip (CIDR)</ip>
+                    <port>port</port>
+                    <source_port>sourcePort</source_port>
+                    <network>network (tcp/udp)</network>
+                    <inbound_tag>inboundTag</inbound_tag>
+                    <geoip>geoip</geoip>
+                    <geosite>geosite</geosite>
+                </OptionValues>
+            </type>
+            <!-- Значения через запятую. Для geoip/geosite можно без префикса
+                 (добавится автоматически). Примеры:
+                 domain: google.com, full:example.org, keyword:cdn
+                 geoip: cn, private, ru
+                 geosite: category-ads-all, google -->
+            <value type="TextField">
+                <Required>Y</Required>
+                <Default></Default>
+            </value>
+            <action type="OptionField">
+                <Default>proxy</Default>
+                <Required>Y</Required>
+                <OptionValues>
+                    <proxy>proxy (upstream)</proxy>
+                    <balancer>balancer</balancer>
+                    <direct>direct (freedom)</direct>
+                    <block>block (blackhole)</block>
+                </OptionValues>
+            </action>
+        </rule>
+    </items>
+</model>

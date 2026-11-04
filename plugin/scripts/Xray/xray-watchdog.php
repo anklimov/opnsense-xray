@@ -79,11 +79,16 @@ foreach ($instances->instance as $inst) {
         continue;
     }
 
+    // v4.0.0: tun2socks-проверка — только для legacy-драйвера;
+    // xray-драйверу достаточно xray-core (TUN живёт внутри процесса)
+    $driver    = ((string)($inst->tun_driver ?? '') !== '') ? (string)$inst->tun_driver : 'tun2socks';
+    $legacyTun = $driver !== 'xray';
+
     $xrayPid = "/var/run/xray_core_{$inst_uuid}.pid";
     $t2sPid  = "/var/run/tun2socks_{$inst_uuid}.pid";
 
     $xrayAlive = proc_alive($xrayPid);
-    $t2sAlive  = proc_alive($t2sPid);
+    $t2sAlive  = $legacyTun ? proc_alive($t2sPid) : true;
 
     // E1: watchdog must check xray-core PID (XRAY_PID) and tun2socks PID (T2S_PID)
     if ($xrayAlive && $t2sAlive) {
@@ -92,7 +97,7 @@ foreach ($instances->instance as $inst) {
 
     $died = [];
     if (!$xrayAlive) $died[] = 'xray-core';
-    if (!$t2sAlive)  $died[] = 'tun2socks';
+    if ($legacyTun && !$t2sAlive) $died[] = 'tun2socks';
 
     wlog("WATCHDOG [{$name}]: " . implode(', ', $died) . " not running — triggering restart");
 

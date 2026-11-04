@@ -8,58 +8,58 @@
 [![OPNsense](https://img.shields.io/badge/OPNsense-25.x%20%2F%2026.x-blue)](https://opnsense.org)
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-14.x%20amd64-red)](https://freebsd.org)
 
-**Xray-core VPN plugin for OPNsense** — v3.2.1 (fork of [MrTheory/os-xray](https://github.com/MrTheory/os-xray), see [what differs](#fork-what-differs-from-upstream))
+**Xray-core VPN plugin for OPNsense** — v4.0.0 (fork of [MrTheory/os-xray](https://github.com/MrTheory/os-xray), see [what differs](#fork-what-differs-from-upstream))
 
-Xray-core + tun2socks — native VPN client for OPNsense with selective routing support. VLESS+Reality via wizard or custom config.json (any protocol/transport). Bypasses DPI blocking by disguising traffic as legitimate TLS.
+Native Xray-core VPN for OPNsense: the **built-in TUN inbound** intercepts traffic (no tun2socks needed), the **xray routing engine** decides what goes where (domain/IP/port/GeoIP/GeoSite rules), **balancer + observatory** (leastPing / roundRobin / leastLoad / random) pick a healthy exit node, and a **server-side VLESS inbound** (fronted by nginx if you like) turns the box into an entry point. The full `config.json` can be edited as Raw JSON with syntax highlighting and `xray -test` validation. VLESS+Reality via wizard or custom config — any protocol/transport. Bypasses DPI blocking by disguising traffic as legitimate TLS.
 
 ---
 
 ## Fork: what differs from upstream
 
-This is a fork of [MrTheory/os-xray](https://github.com/MrTheory/os-xray) (branch `develop`). Everything upstream does still works the same way; the fork adds one feature and fixes what that feature uncovered.
+This is a fork of [MrTheory/os-xray](https://github.com/MrTheory/os-xray) (branch `develop`). Upstream functionality keeps working; the fork has grown in two big steps.
 
-**Added — server groups with subscription import.** An instance no longer carries its node inline only: it can point at a **group** and one **active server** in it, so changing the exit node is a dropdown choice plus Apply instead of editing outbound JSON. A group created from a subscription URL gets a **Refresh** button that re-fetches the list on demand.
+**v4.0.0 — native Xray mechanisms (no external daemons).** The whole config is now produced by a single builder and drives xray-core features directly:
 
-- New model `OPNsense\Xray\Group` (`//OPNsense/xray/groups`) with two ArrayFields, `group` and `server`, plus a `Groups` tab holding both grids and the import panel.
-- New API `api/xray/group/*`: CRUD for groups and servers, `importSubscription`, `refresh`. Own ACL entry, no new configd actions.
-- New instance fields `node_source`, `group`, `server`. **`node_source` makes the two ways of defining a node mutually exclusive in the dialog**: `Xray config (JSON)` shows the outbound JSON and the Import VLESS link panel, `Server group` shows the group and server pickers instead.
-- `xray_active_outbound()` in `xray-service-control.php` is the single place deciding where a node comes from; the instances grid and `xray-ifstats.php` resolve it the same way, so the `Server` column and the Diagnostics ping follow the active node.
-- The `vless://` parser moved from `ImportController` into a shared `OPNsense\Xray\VlessLink` class, so single-link and subscription import cannot drift apart.
+- **Native TUN inbound** (`"protocol": "tun"`) — xray-core creates the interface itself (verified against `proxy/tun/tun_freebsd.go` in Xray-core 26.10+); tun2socks remains as a per-instance legacy fallback (`tun_driver`). New instance default: interface `tun100`, gateway `10.255.0.1/30`.
+- **xray routing engine** — new model `OPNsense\Xray\RoutingRule` (`//OPNsense/xray/routing_rules`), a **Routing** tab and `api/xray/rule/*`: rules by domain / ip / port / sourcePort / network / inboundTag / **geoip** / **geosite** → proxy / balancer / direct / block. `install.sh` downloads `geoip.dat`/`geosite.dat`; the old `bypass_networks` migrates into a rule.
+- **Balancer + observatory** — `lb_enabled` with leastPing / roundRobin / leastLoad / random strategies (all confirmed in `app/router/config.go`), members = all servers of the selected group or a custom outbound list; the builder emits `routing.balancers` + `burstObservatory` + a catch-all rule; `fallbackTag` = first node, so a dead node fails the connection instead of leaking traffic directly.
+- **Server-side inbound (VLESS)** — the engine accepts incoming connections (WebSocket behind nginx, gRPC, h2, TCP/Reality), users via JSON + UUID generator button, arbitrary extra inbounds (vmess/trojan/ss/dokodemo), per-instance `srv_default_outbound`, and an nginx snippet generator in the dialog.
+- **Raw JSON mode** — `node_source` extended to `config | group | none | raw`: the full `config.json` in a CodeMirror editor with **Validate Config** (draft, via `xray -test`), **Format** and **Preview Generated Config** buttons.
+- **ConfigBuilder** (`mvc/app/library/OPNsense/Xray/ConfigBuilder.php`) — the single source of config generation used by start/reconfigure/validate/preview; config assembly is no longer duplicated in the service script. Strict config errors (port clashes, `tunN` naming, balancer action without LB, …).
+- **Full tunnel option** — `tun_auto_routing = full` makes xray manage system routes itself (`autoSystemRoutingTable`, escape FIB via `autoOutboundsInterface`, optional `autoSystemDnsToGateway`); requires `net.fibs=2`, shown in Diagnostics.
+- **DNS hijack** — `dns_mode = hijack` answers port-53 traffic from the tunnel with xray's built-in DNS (`dns-out` outbound + routing rule). Note: Xray-core has **no FakeIP** (verified in `infra/conf/dns.go`) — domains for TUN clients come from sniffing instead.
 
-**Deliberately not added.** No subscription auto-refresh (no cron, no timer, no fetch on Apply) and no automatic node selection (no balancer, observatory, `leastPing` or fallback). The active node is chosen by a human, and Refresh never restarts the service nor changes an instance's active server — a node that disappeared from the subscription while being used is kept and flagged `stale` instead of being deleted.
+**v3.2 — server groups with subscription import.** An instance can point at a **group** and one **active server** in it; changing the exit node is a dropdown plus Apply. A group created from a subscription URL gets a **Refresh** button that re-fetches the list on demand. The `vless://` parser lives in a shared `OPNsense\Xray\VlessLink` class.
 
-**Fixed along the way.**
+**Fixed along the way** (selected): duplicate instance created when installing on top of a working 3.x; custom row-command formatter ignored on OPNsense 26.7 unless named `commands`; `requestHandler` only read from `options`; xray-core/tun2socks logs vanishing after the first rotation (daemons now run under `daemon -H -o` with SIGHUP reopen); tun2socks 2.7 needing `--config`.
 
-- `install.sh` imported a **second instance** when run on top of a working 3.x setup: its "config already present" probe looked for the v1/v2 fields `server_address`/`vless_uuid`, which 3.x does not have, so it fell through to the import path and created a duplicate instance bound to the same SOCKS port. It now also checks `outbound_config` and `server`.
-- A custom row-command formatter is ignored on OPNsense 26.7 unless it is named `commands` — the grid shim renders that column with its own formatter, so a differently named one is silently dropped.
-- `requestHandler` is only read from `options`; passed at the top level of a `UIBootgrid` call it is ignored.
-- **xray-core and tun2socks logs vanished after the first rotation.** The daemons were started with a shell redirect `>> log`, so the file was opened once; newsyslog renamed and compressed it without a signal, and output kept going to the deleted inode. `daemon(8)` now owns the log (`-H -o`), and after rotation `xray-log-reopen.sh` sends SIGHUP to its supervisor (`-P /var/run/xray-daemon-*.pid`). The boot path (`plugins.inc.d/xray.inc`) now writes to the instance's own log instead of the shared `/var/log/xray-core.log`.
-- tun2socks 2.7 only accepts `--config` (two dashes), not `-config`.
-
-**Compatibility.** Existing configurations keep working untouched: the new fields are empty, and an empty `node_source` reproduces the previous behaviour of preferring a selected server. `outbound_config` stays a first-class way to define a node, not a deprecated one. Model versions are bumped so the schema is re-read; no migration class is needed. Going back to upstream is not just reinstalling the plugin — `//OPNsense/xray/groups` and the new instance fields have to be removed from `config.xml` by hand.
+**Compatibility.** Existing configurations keep working untouched: migrated instances keep the `tun2socks` driver and their interface name, an empty `node_source` with a selected server still means `group`, and `outbound_config` stays a first-class way to define a node. Switching an instance to the native TUN driver is a deliberate action in the dialog (the interface must be renamed to `tunN`). Going back to upstream means removing `//OPNsense/xray/groups`, `//OPNsense/xray/routing_rules` and the new instance fields from `config.xml` by hand.
 
 
 ## Features
 
-- **Server groups + subscription import** — import a list of `vless://` links as a group, then pick the active node from a dropdown; **Refresh** re-fetches the list on demand (no auto-refresh, no automatic node selection)
-- **Node Source switch** — an instance takes its node either from its own config JSON or from a group server; the dialog shows only the fields of the chosen mode
+- **Native Xray TUN inbound** — the TUN interface is created by xray-core itself (`"protocol": "tun"`), no external daemons; tun2socks remains as a per-instance legacy fallback
+- **xray routing engine** — per-instance rules by domain / IP / port / sourcePort / network / inboundTag / **GeoIP** / **GeoSite** (dat files installed automatically), with `Preview Generated Config` showing the result
+- **Balancing + health checks** — balancer with leastPing / roundRobin / leastLoad / random strategies and a background `burstObservatory` probing every member; all servers of a group or a custom outbound list become members
+- **Server-side inbound (VLESS)** — accept incoming proxy connections (WebSocket behind nginx, gRPC, h2, or TCP/Reality directly); nginx snippet generator in the dialog; extra inbounds (vmess/trojan/ss/dokodemo) via a JSON list
+- **Raw JSON mode** — the full `config.json` in a CodeMirror editor with syntax highlighting, **Validate Config** (draft, via `xray -test`) and **Format** buttons; wizard mode generates everything from GUI fields
+- **Config Source switch** — group / own JSON / server-only / raw full config; the dialog shows only the fields of the chosen mode
+- **Server groups + subscription import** — import a list of `vless://` links as a group, then pick the active node from a dropdown; **Refresh** re-fetches the list on demand
+- **Full tunnel or selective** — xray can manage the system routes itself (`autoSystemRoutingTable`, needs `net.fibs=2`) or leave the choice to OPNsense firewall rules and the TUN gateway
+- **DNS hijack** — DNS from the tunnel answered by Xray's built-in DNS (leak-free full tunnel); optional `autoSystemDnsToGateway` for the router's own resolver
 - **Multi-instance support** — add, edit and delete multiple VPN instances from a bootgrid table
-- **Per-instance status badges** — each instance row shows xray/tun2socks up/down status, auto-refreshed every 5 seconds
-- **Custom Config** — two modes: Wizard (VLESS+Reality via GUI fields) or Custom (any xray-core config.json for any protocol and transport)
-- **Import VLESS link inside dialog** — collapsible Import panel at the top of the instance edit dialog; Validate Config button in dialog footer; no separate import modal
-- **Import VLESS link** — auto-detects wizard or custom mode; generates full config.json for xhttp, ws, grpc, h2, kcp transports; SOCKS5 address and port from form fields are respected in generated config
+- **Per-instance status badges** — each instance row shows xray/tun status, auto-refreshed every 5 seconds
+- **Import VLESS link inside dialog** — collapsible Import panel at the top of the instance edit dialog
 - Full VLESS+Reality parameter support (UUID, flow, SNI, PublicKey, ShortID, Fingerprint)
 - Tunnel management via GUI: **VPN → Xray**
 - Auto-detects and imports existing xray-core and tun2socks configs during installation
-- Compatible with OPNsense selective routing (Firewall Aliases + Rules + Gateway)
 - **Start / Stop / Restart buttons** — manage the service directly from GUI without page reload
-- **Validate Config button** — dry-run config through `xray -test` without stopping the service (in instance dialog footer)
+- **Validate Config button** — dry-run config through `xray -test` without stopping the service
 - **Test Connection button** — verifies that xray-core is actually proxying traffic
 - **Log tab** — Boot Log and Xray Core Log directly in GUI
-- **Diagnostics tab** — TUN interface stats: IP, MTU, bytes, packets, process uptime, Ping RTT to VPN server; auto-refresh every 30 seconds
+- **Diagnostics tab** — TUN interface stats: IP, MTU, bytes, packets, uptime, Ping RTT; plus environment: xray version, geo data files, `net.fibs`, listening ports
 - **Copy Debug Info button** — collects diagnostics + logs into a modal for easy copy to issue reports
-- **Bypass Networks** — configurable CIDR list of networks for direct routing (VPN bypass)
-- **Watchdog** — automatic restart on xray-core or tun2socks crash (configurable)
+- **Watchdog** — automatic restart on xray-core (or legacy tun2socks) crash (configurable)
 - **Auto-start after reboot** — interface comes up automatically, no need to press Apply manually
 - ACL permissions — GUI and API access only for authorized users with `page-vpn-xray` role
 
@@ -68,14 +68,18 @@ This is a fork of [MrTheory/os-xray](https://github.com/MrTheory/os-xray) (branc
 ## Stack
 
 ```
-xray-core (VLESS+Reality)
-    ↓ SOCKS5 (default 127.0.0.1:10808, configurable)
-tun2socks
-    ↓ TUN interface proxytun2socks0
-OPNsense Gateway PROXYTUN_GW
-    ↓
+                    ┌────────────────────────── xray-core (single process) ──────────────────────────┐
+                    │ inbounds: tun-in (protocol "tun") · socks-in · vless-in (server mode, optional)│
+                    │ routing:  rules (domain/ip/port/geoip/geosite) → balancer lb / direct / block    │
+                    │ outbounds: proxy-1..N (group servers) · balancer+observatory · freedom · dns     │
+                    └────────────────────────────────────────────────────────────────────────────────┘
+                                           ↓ TUN interface (tun100, tunN on FreeBSD)
+OPNsense Gateway PROXYTUN_GW (selective)  ·  or xray-managed system routes (full tunnel)
+                                           ↓
 Firewall Rules (selective routing)
 ```
+
+Legacy fallback per instance: `tun2socks → TUN → SOCKS5 → xray-core` (v3.x behaviour).
 
 ---
 
@@ -85,8 +89,9 @@ Firewall Rules (selective routing)
 |------------|-------------------------|
 | OPNsense   | 25.x / 26.x            |
 | FreeBSD    | 14.x amd64             |
-| xray-core  | 24.x+ (recommended)    |
-| tun2socks  | Any recent version     |
+| xray-core  | **26.10+** (native TUN; installer upgrades automatically) |
+| tun2socks  | Optional — legacy TUN driver only |
+| net.fibs   | ≥ 2 — only for the Full tunnel mode (`/boot/loader.conf`, reboot) |
 
 ---
 
@@ -112,8 +117,10 @@ sh install.sh
 The installer automatically:
 
 - Shows current and new plugin version and asks for confirmation
-- Checks xray-core version — if below 24.x, offers automatic upgrade
-- Checks for xray-core and tun2socks binaries — if missing, displays download links
+- Checks xray-core version — if below **26.10** (native TUN inbound on FreeBSD), offers automatic upgrade to the latest release
+- Downloads **geoip.dat** and **geosite.dat** into `/usr/local/etc/xray-core/` (for GeoIP/GeoSite routing rules)
+- Installs web assets (CodeMirror editor) into `/usr/local/opnsense/www/js/xray/`
+- Migrates v3.x instances: legacy `bypass_networks` becomes a routing rule, TUN driver preserved as `tun2socks`
 - Checks if the SOCKS5 port (default 10808) is already in use
 - Finds existing configs and imports them into OPNsense (GUI fields are pre-filled)
 - Copies all plugin files, restarts configd, clears caches
@@ -131,37 +138,107 @@ configctl xray version
 Refresh browser (`Ctrl+F5`) → **VPN → Xray**
 
 1. **Instances** tab → click **+** to open the instance dialog
-   - Expand the **Import VLESS link** panel at the top of the dialog → paste link → **Parse & Fill**
-     - For standard VLESS+Reality (TCP) links → automatically fills wizard fields
-     - For links with other transports (xhttp, ws, grpc, h2, kcp) → automatically generates Custom Config JSON using SOCKS5 address and port from the form
-   - *(Optional)* **Config Mode** → Custom — for manually pasting arbitrary config.json (any xray-core protocol/transport)
-   - *(Optional)* **Bypass Networks** field — specify networks that should bypass VPN (default: private networks 10/8, 172.16/12, 192.168/16)
-   - **Validate Config** button (dialog footer) — validate config without restarting the service
-2. **General** tab → check **Enable Xray** (and **Enable Watchdog** if desired)
-3. Press **Apply**
-4. **Test Connection** button — verify the tunnel is working (shows HTTP 200)
+   - **Config Source** — where the config comes from:
+     - *Xray config (JSON)* — expand the **Import VLESS link** panel, paste link → **Parse & Fill** (or paste an outbound JSON yourself); the backend wraps it with TUN/SOCKS/routing sections
+     - *Server group* — pick a group and the active server (or enable Load Balancing to use all of them)
+     - *Server only* — no upstream: pure incoming proxy (see Server Inbound below)
+     - *Custom full config (Raw JSON)* — the entire `config.json` in a highlighted editor; **Validate Config** checks the draft via `xray -test`, **Format** pretty-prints it
+   - **TUN Driver** — `Xray TUN inbound (native)` (default for new instances; interface must be `tunN` on FreeBSD) or `tun2socks (legacy)`
+   - **Preview Generated Config** (footer, wizard modes) — shows exactly what will be written to `/usr/local/etc/xray-core/`
+2. **Routing** tab → add rules (per instance): match by domain / ip / port / sourcePort / network / inboundTag / **geoip** / **geosite** → action proxy / balancer / direct / block
+3. **General** tab → check **Enable Xray** (and **Enable Watchdog** if desired)
+4. Press **Apply**
+5. **Test Connection** button — verify the tunnel is working (shows HTTP 200)
 
 ---
 
-## Interface and Gateway
+## Interface and Gateway (selective routing)
+
+With the native TUN driver xray creates the interface itself and assigns the address **right after the gateway** (`10.255.0.1/30` → interface gets `10.255.0.2/30`); the gateway belongs to nothing and is routed into the TUN.
 
 | Step | GUI Path | Value |
 |------|----------|-------|
-| Assign interface | Interfaces → Assignments | + Add: proxytun2socks0 |
-| Enable and configure | Interfaces → \<name\> | Enable ✓, IPv4: Static, IP: `10.255.0.1/30` |
+| Assign interface | Interfaces → Assignments | + Add: **tun100** (must be `tunN` on FreeBSD) |
+| Enable and configure | Interfaces → \<name\> | Enable ✓, IPv4: Static, IP: `10.255.0.2/30` (= gateway + 1) |
 | **Prevent removal** | Interfaces → \<name\> | **Prevent interface removal ✓** |
-| Create gateway | System → Gateways → Add | Gateway IP: `10.255.0.2`, Far Gateway ✓, Monitoring off ✓ |
+| Create gateway | System → Gateways → Add | Gateway IP: `10.255.0.1`, Far Gateway ✓, Monitoring off ✓ |
 
-> **Important:** the **Prevent interface removal** checkbox is mandatory — without it, OPNsense may remove the interface from config on reboot if tun2socks hasn't created it yet.
+> **Important:** the **Prevent interface removal** checkbox is mandatory — without it, OPNsense may remove the interface from config on reboot if xray hasn't created it yet. The static IP must match what xray assigns (gateway + 1 with the same mask), otherwise OPNsense re-applies a different address.
+
+> **Full tunnel mode:** with `System Routing = Full tunnel` none of this is needed — xray installs the system routes itself. It requires `net.fibs=2` in `/boot/loader.conf` and a reboot (OPNsense keeps xray's own connections out of the TUN via a second routing table). Check the value on the **Diagnostics** tab.
 
 ---
 
-## Selective Routing
+## Selective Routing (OPNsense level)
 
 - **Firewall → Aliases** — create a list of IPs/networks/domains for VPN routing
 - **Firewall → Rules → LAN** — add rule: Source = LAN net, Destination = alias, Gateway = PROXYTUN_GW
 
 MSS Clamping is not required for Xray (unlike WireGuard).
+
+---
+
+## Routing Rules (xray engine)
+
+The **Routing** tab holds per-instance rules compiled into `routing.rules` of the generated config (applied in creation order; the DNS hijack rule is prepended automatically, private networks → direct appended after them, so local traffic never loops into the proxy):
+
+| Match | Value examples | Notes |
+|-------|----------------|-------|
+| domain | `google.com, full:example.org, keyword:cdn, regexp:.*\.foo\..*` | v2ray domain patterns |
+| ip | `203.0.113.0/24, 10.8.0.1` | CIDR / hosts |
+| port | `80, 443, 1000-2000` | destination port |
+| sourcePort | `60000-61000` | source port |
+| network | `tcp`, `udp`, `tcp,udp` | |
+| inboundTag | `tun-in`, `socks-in`, `vless-in` | e.g. route incoming clients differently |
+| geoip | `private, cn, ru` | `geoip:` prefix added automatically; geoip.dat |
+| geosite | `category-ads-all, google` | `geosite:` prefix added automatically; geosite.dat |
+
+Actions: `proxy` (upstream or balancer), `balancer`, `direct` (freedom), `block` (blackhole).
+
+Example: block ads everywhere and let clients reach corporate subnets directly:
+
+| Match | Value | Action |
+|-------|-------|--------|
+| geosite | category-ads-all | block |
+| geoip | private | direct |
+
+---
+
+## Load Balancing
+
+Enable **Load Balancing** in the instance dialog (Config Source = Server group uses **all servers of the group**; with own JSON use the *Custom Outbound List* field). The generated config gets:
+
+- `outbounds`: `proxy-1..N` (one per server) + balancer `lb` with the chosen strategy — **leastPing**, **roundRobin**, **leastLoad** or **random**
+- `burstObservatory`: background health checks of every member (`probeURL`, `probeInterval`)
+- a catch-all rule sending unmatched traffic through the balancer; `fallbackTag` = first node (a dead node fails the connection instead of leaking traffic directly)
+
+A node that disappears from the subscription stays in the group flagged `stale`; the balancer drops it once probes fail.
+
+---
+
+## Raw JSON mode
+
+**Config Source = Custom full config (Raw JSON)** writes your `config.json` verbatim:
+
+- CodeMirror editor with JSON syntax highlighting
+- **Validate Config** — the draft is checked by `xray -test` on the router (not the saved config!)
+- **Format** — pretty-print
+- Notes: with the tun2socks legacy driver the config must contain a SOCKS inbound at the configured port; the plugin's routing rules / balancer sections do not apply (they are wizard-only)
+
+---
+
+## Server Inbound (incoming VLESS behind nginx)
+
+The engine can also accept connections — the box becomes a proxy entry point. Enable **Incoming VLESS** in the instance dialog:
+
+1. **Users (JSON)** — click **Add user** to append a generated UUID, e.g. `[{"id":"…","email":"user1","flow":""}]`
+2. **Transport** — `WebSocket` (behind nginx), `gRPC`, `HTTP/2` or `TCP`; set path/service name
+3. **Security** — `None` (TLS terminates on nginx), `TLS` (own certificate files) or `Reality` (direct exposure, TCP only)
+4. Click **nginx snippet** — a ready configuration for the current settings (WS / gRPC / stream tabs) to paste into the nginx plugin (Services → Nginx) or a custom include
+5. Open the public port in **Firewall → Rules** (WAN) if exposing directly
+6. **Incoming Traffic Default** — where clients' traffic goes when no rule matches: `direct`, `proxy` (chain through the upstream) or `balancer`; route per-domain with a rule on `inboundTag: vless-in`
+
+Client link: `vless://<uuid>@<your-host>:443?security=tls&type=ws&path=/vless#my-opnsense` (with nginx terminating TLS on 443).
 
 ---
 
@@ -176,7 +253,7 @@ Without this, traffic through the tunnel won't be NATed and won't get past the V
 
 | Field | Value |
 |-------|-------|
-| Interface | PROXYTUN (proxytun2socks0) |
+| Interface | PROXYTUN (tun100 / your TUN name) |
 | TCP/IP Version | IPv4 |
 | Protocol | any |
 | Source address | LAN net |
@@ -191,11 +268,11 @@ Without this, traffic through the tunnel won't be NATed and won't get past the V
 
 ## Auto-start After Reboot
 
-After reboot, the `proxytun2socks0` interface comes up automatically — xray and tun2socks start, the interface gets an IP, firewall rules are reloaded. No need to press Apply manually.
+After reboot, the TUN interface comes up automatically — xray starts (creating the interface with the native driver, or together with tun2socks on the legacy driver), the interface gets an IP, firewall rules are reloaded. No need to press Apply manually.
 
 Works through two mechanisms with double-start protection (flock):
-- **`xray_configure_do()`** — boot hook (priority 10), starts processes early in boot
-- **`/usr/local/etc/rc.syshook.d/start/50-xray`** — final script, brings up the interface and applies routing/firewall when OPNsense is fully loaded
+- **`xray_configure_do()`** — boot hook (priority 10), delegates to `xray-service-control.php start` (config build + `xray -test` + driver-aware start)
+- **`/usr/local/etc/rc.syshook.d/start/50-xray`** — final script, waits for the interface and applies routing/firewall when OPNsense is fully loaded
 
 Log saved to `/tmp/xray_syshook.log` (append mode, rotated at 50 KB).
 
@@ -203,7 +280,7 @@ Log saved to `/tmp/xray_syshook.log` (append mode, rotated at 50 KB).
 
 ## Watchdog
 
-When **Enable Watchdog** is on, cron checks xray-core and tun2socks every minute. If either process crashes, both are restarted automatically. Events are logged to `/var/log/xray-watchdog.log` (rotation: 3 files, 100 KB each).
+When **Enable Watchdog** is on, cron checks xray-core every minute (and tun2socks for legacy-driver instances). If a process crashes, the instance is restarted automatically. Events are logged to `/var/log/xray-watchdog.log` (rotation: 3 files, 100 KB each).
 
 Watchdog does not restart the service if it was stopped manually via the **Stop** button or **Apply** with Enable unchecked.
 
@@ -212,8 +289,8 @@ Watchdog does not restart the service if it was stopped manually via the **Stop*
 ## Stopping the Service
 
 When stopping (`Stop` in GUI or `Apply` with Enable unchecked):
-1. Stops tun2socks — it destroys the TUN interface on exit
-2. Stops xray-core
+1. Stops tun2socks (legacy driver) — it destroys the TUN interface on exit
+2. Stops xray-core — the native TUN driver destroys its interface on shutdown (and the plugin force-destroys it if the process was killed uncleanly)
 3. Sets intentional stop flag — watchdog won't restart the service
 
 ---
@@ -231,41 +308,42 @@ sh install.sh uninstall
 
 ### Step-by-Step Diagnostics
 
-Run these commands in order. Each step narrows down the problem:
+Run these commands in order. Each step narrows down the problem. `<uuid>` below is the instance UUID (see `configctl xray statusall`, or the Diagnostics tab).
 
 ```sh
 # Step 1 — Plugin and binaries
 configctl xray version
-ls -la /usr/local/bin/xray-core /usr/local/tun2socks/tun2socks
-/usr/local/bin/xray-core version          # xray-core version (should be 24.x+)
+ls -la /usr/local/bin/xray-core /usr/local/tun2socks/tun2socks   # tun2socks optional (legacy driver)
+/usr/local/bin/xray-core version          # xray-core version (26.10+ for the native TUN driver)
 
 # Step 2 — Service status
-configctl xray status                      # JSON: xray_core + tun2socks status
-ps aux | grep -E 'xray|tun2socks'         # actual processes
+configctl xray statusall                   # JSON per instance: xray_core + tun (or tun2socks) + driver
+ps aux | grep -E 'xray|tun2socks'          # actual processes
 
-# Step 3 — Config validation
-configctl xray validate                    # dry-run without restart
+# Step 3 — Config validation / preview
+configctl xray validate <uuid>             # dry-run without restart
+configctl xray generate <uuid>             # print the generated config.json
 # or directly:
-/usr/local/bin/xray-core -test -c /usr/local/etc/xray-core/config.json
+/usr/local/bin/xray-core -test -c /usr/local/etc/xray-core/config-<uuid>.json
 
 # Step 4 — Network
-ifconfig proxytun2socks0                   # TUN interface: UP + inet address?
-netstat -rn | grep proxytun               # routing table entry?
+ifconfig tun100                            # TUN interface (xray driver): UP + inet 10.255.0.2?
+netstat -rn | grep tun                     # routing table entries?
 curl --socks5 127.0.0.1:10808 -s -o /dev/null -w "%{http_code}" https://1.1.1.1 --max-time 10
 # 200 = tunnel works, 000 = no connection
 
-# Step 5 — Firewall
-pfctl -sr | grep proxytun                 # firewall rules for TUN?
-pfctl -sn | grep proxytun                 # NAT rules for TUN?
+# Step 5 — Firewall (selective mode)
+pfctl -sr | grep tun                       # firewall rules for TUN?
+pfctl -sn | grep tun                       # NAT rules for TUN?
 
 # Step 6 — Logs (most recent errors)
-tail -30 /var/log/xray-core.log
+tail -30 /var/log/xray-core-<uuid>.log
 cat /tmp/xray_syshook.log
 tail -20 /var/log/xray-watchdog.log
 
-# Step 7 — Configs
-cat /usr/local/etc/xray-core/config.json
-cat /usr/local/tun2socks/config.yaml
+# Step 7 — Configs and geo data
+ls -la /usr/local/etc/xray-core/           # config-<uuid>.json, geoip.dat, geosite.dat
+cat /usr/local/tun2socks/config-<uuid>.yaml # legacy driver only
 ```
 
 ---
@@ -277,32 +355,38 @@ cat /usr/local/tun2socks/config.yaml
 | Error Message | Cause | Solution |
 |---|---|---|
 | `xray-core not found at /usr/local/bin/xray-core` | Binary missing | Install xray-core (see Manual Binary Installation below) |
-| `tun2socks not found at /usr/local/tun2socks/tun2socks` | Binary missing | Install tun2socks (see below) |
-| `Xray is disabled in config` | Enable not checked | GUI → General → Enable Xray ✓ → Apply |
-| `Another start is already in progress (lock held)` | Parallel start, lock file held | Wait 30s. If persists: `rm -f /var/run/xray_start.lock` |
-| `ERROR: Failed to start Xray services` | xray-core or tun2socks crashed on start | Check `/var/log/xray-core.log` for details |
-| `No config found in config.xml` | GUI fields empty | Import VLESS link or fill fields manually → Apply |
+| `tun2socks not found … switch the instance TUN driver to "Xray TUN inbound (native)"` | Legacy driver selected but tun2socks missing | Install tun2socks **or** switch the instance TUN driver to the native one |
+| `Xray is disabled or instance not found` | Enable not checked | GUI → General → Enable Xray ✓ → Apply |
+| `Another start is already in progress (lock held)` | Parallel start, per-instance lock held | Wait 30s. If persists: `rm -f /var/run/xray_start_<uuid>.lock` |
+| `ERROR: Failed to start Xray services` | xray-core (or legacy tun2socks) crashed on start | Check `/var/log/xray-core-<uuid>.log` for details |
+| `No instances configured` | No instance created | Instances tab → **+** → fill fields → Apply |
 
-#### Config Validation Errors
+#### Config Validation Errors (ConfigBuilder)
 
 | Error Message | Cause | Solution |
 |---|---|---|
 | `ERROR: config validation failed` + xray output | Invalid xray-core config | See xray output below the error for specifics |
-| `ERROR: custom_config is empty` | Custom mode selected but textarea empty | Paste config.json into Custom Config field |
-| `ERROR: custom_config is not valid JSON` | Malformed JSON in custom config | Validate JSON (check commas, brackets, quotes) |
-| `ERROR: Cannot create temp file for validation` | /tmp full or permission issue | `df /tmp` to check disk space |
-| `ERROR: config file not found after write` | Write failed | Check `/usr/local/etc/xray-core/` permissions |
+| `full config is empty` (raw mode) | Raw JSON mode with an empty editor | Paste the config.json, press Validate Config |
+| `full config is not valid JSON` | Malformed JSON in the raw editor | Press **Format** or check commas/brackets/quotes |
+| `outbound_config is empty` | Config Source = JSON without outbound | Import VLESS link or paste an outbound JSON |
+| `the selected server group has no servers` / `no server is selected` | Group mode misconfigured | Pick a group with servers (or the active server) |
+| `FreeBSD requires the TUN interface name to match "tunN"` | xray TUN driver with a non-`tunN` name | Rename the interface, e.g. `tun100` |
+| `SOCKS5 port and server inbound port must differ` | Port clash | Change one of the ports |
+| `action "balancer" requires Load Balancing enabled…` | Rule uses the balancer action without LB | Enable Load Balancing or change the rule action |
+| `no upstream configured … but a rule uses action "proxy"` | Server-only instance with a proxy rule | Change the rule to direct/block or set a Config Source with a node |
+| `Cannot create temp file for validation` | /tmp full or permission issue | `df /tmp` to check disk space |
 
 #### xray-core Validation Errors (from `xray -test`)
 
 | xray-core Output | Cause | Solution |
 |---|---|---|
 | `invalid user id` | Malformed UUID | Check UUID format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
-| `unknown transport protocol: xhttp` | xray-core < 24.x doesn't know xhttp | Upgrade xray-core to 24.x+ or plugin will auto-normalize to splithttp |
-| `REALITY only supports TCP, H2, gRPC and DomainSocket` | Unsupported transport+security combo | Use Custom Config mode for non-TCP Reality, or change transport/security |
+| `unknown transport protocol: xhttp` | Very old xray-core build | Upgrade xray-core to 26.10+ (v4.0.0 no longer normalizes xhttp→splithttp) |
+| `REALITY only supports TCP, H2, gRPC and DomainSocket` | Unsupported transport+security combo | Change transport/security (Reality server inbound in the wizard requires TCP) |
 | `failed to dial` | VPN server unreachable | Check server address and port, test with `ping` or `nc -zv host port` |
-| `address already in use` | SOCKS5 port occupied | `sockstat -4l \| grep 10808` — change port in GUI or stop conflicting process |
-| `unknown config format` | Config file has wrong extension | Should not happen in v3.0.0+ (fixed in v1.9.1) |
+| `address already in use` | SOCKS5/server port occupied | `sockstat -4l \| grep 10808` — change port in GUI or stop conflicting process |
+| `interface already exists` | TUN name taken (xray driver) | Pick another free `tunN` for this instance |
+| `automatic outbound interface on FreeBSD needs a second routing table…` | Full tunnel without `net.fibs=2` | Add `net.fibs=2` to `/boot/loader.conf` and reboot |
 
 #### Network Warnings
 
@@ -340,7 +424,9 @@ configctl xray status
 # GUI → General → Enable Xray ✓ → Apply
 
 # Validate config separately:
-/usr/local/bin/xray-core -test -c /usr/local/etc/xray-core/config.json
+configctl xray validate
+# or directly:
+/usr/local/bin/xray-core -test -c /usr/local/etc/xray-core/config-<uuid>.json
 ```
 
 ---
@@ -358,9 +444,9 @@ ls -la /usr/local/etc/rc.syshook.d/start/50-xray
 ls -la /usr/local/etc/inc/plugins.inc.d/xray.inc
 
 # 3. Check if stopped flag is set (prevents auto-start)
-ls -la /var/run/xray_stopped.flag
+ls -la /var/run/xray_stopped_*.flag
 # If present, remove it:
-rm -f /var/run/xray_stopped.flag
+rm -f /var/run/xray_stopped_<uuid>.flag
 
 # 4. Start manually
 configctl xray start
@@ -378,9 +464,9 @@ service configd status
 service configd start
 
 # 3. Check for stuck lock file
-ls -la /var/run/xray_start.lock
+ls -la /var/run/xray_start_*.lock
 # If older than 1 minute:
-rm -f /var/run/xray_start.lock
+rm -f /var/run/xray_start_<uuid>.lock
 
 # 4. Check for stuck PHP process
 ps aux | grep xray-service-control
@@ -404,8 +490,8 @@ tail -20 /var/log/system/latest.log
 **Cause:** Missing Outbound NAT rule on TUN interface.
 
 ```sh
-# Verify NAT rules exist for proxytun:
-pfctl -sn | grep proxytun
+# Verify NAT rules exist for the TUN interface:
+pfctl -sn | grep tun
 
 # If empty — add Outbound NAT rule (see Outbound NAT section above)
 ```
@@ -428,26 +514,34 @@ curl --socks5 127.0.0.1:10808 -s https://1.1.1.1 --max-time 10
 ### TUN Interface Issues
 
 ```sh
-# Interface doesn't exist
-ifconfig proxytun2socks0
-# "does not exist" → tun2socks not running or crashed
+# Which driver does the instance use? (see Diagnostics tab or:)
+configctl xray statusall
 
-# Check tun2socks process
-ps aux | grep tun2socks
-# If not running:
-configctl xray start
+# — Native xray driver —
+# Interface doesn't exist:
+ifconfig tun100
+# "does not exist" → xray not running or failed to create the TUN
+ps aux | grep xray-core
+configctl xray start <uuid>
 
-# Interface exists but no IP
-ifconfig proxytun2socks0
-# If no "inet" line → syshook didn't assign IP
-# Run manually:
-ifconfig proxytun2socks0 10.255.0.1/30 up
+# Interface exists but no IP:
+# xray assigns gateway+1 itself (e.g. 10.255.0.2/30 for 10.255.0.1/30)
+tail -50 /var/log/xray-core-<uuid>.log    # look for TUN errors
+# Make sure the OPNsense interface static IP matches gateway+1 —
+# a mismatched address gets re-applied by OPNsense and breaks routing
 
-# Interface UP but no traffic (Ibytes/Obytes = 0)
-netstat -ibn | grep proxytun2socks0
-# Check routing: is traffic going through this interface?
-netstat -rn | grep proxytun
-# If no routing entry → gateway not configured or firewall rules missing
+# Stale interface after an unclean kill:
+ifconfig tun100 destroy && configctl xray start <uuid>
+
+# — Legacy tun2socks driver —
+ps aux | grep tun2socks                    # not running → configctl xray start
+ifconfig proxytun2socks0                   # no "inet" line → run syshook manually:
+/bin/sh /usr/local/etc/rc.syshook.d/start/50-xray <uuid>
+
+# Interface UP but no traffic (either driver)
+netstat -ibn | grep tun100                 # Ibytes/Obytes = 0?
+netstat -rn | grep tun                     # routing entry? gateway/firewall rules (selective mode)
+# Full tunnel mode routes are managed by xray — check with: netstat -rn
 
 # Interface removed after reboot
 # GUI → Interfaces → <TUN interface> → Prevent interface removal ✓
@@ -456,28 +550,26 @@ netstat -rn | grep proxytun
 
 ---
 
-### Custom Config Mode Issues
+### Raw JSON Mode Issues
 
 ```sh
-# Config not applying in custom mode
-# 1. Verify config_mode is set to "custom":
-cat /usr/local/etc/xray-core/config.json | head -5
+# Config not applying in raw mode
+# 1. The editor content is used verbatim — check it with the Validate Config
+#    button (it runs xray -test on the DRAFT, before saving) or:
+/usr/local/bin/xray-core -test -c /usr/local/etc/xray-core/config-<uuid>.json
 
-# 2. Validate JSON syntax:
-echo '<paste your json>' | python3 -m json.tool
-# or:
-configctl xray validate
-
-# 3. Common JSON mistakes:
+# 2. Common JSON mistakes:
 # - Trailing comma after last item in array/object
 # - Single quotes instead of double quotes
 # - Missing quotes around keys
 # - Comments (// or /* */) — not allowed in JSON
 
-# 4. xhttp transport on xray-core < 24.x:
-/usr/local/bin/xray-core version
-# If version starts with 1.x — plugin auto-normalizes xhttp→splithttp
-# If still failing, upgrade xray-core to 24.x+
+# 3. With the tun2socks legacy driver the raw config MUST contain a SOCKS
+#    inbound listening at the instance's SOCKS5 address/port — tun2socks
+#    forwards the TUN traffic into it
+
+# 4. Wizard-only features (routing rules, balancer, TUN/SOCKS sections)
+#    do not apply in raw mode — the config is yours entirely
 ```
 
 ---
@@ -507,7 +599,7 @@ configctl xray validate
 ### VLESS+Reality Connection Issues
 
 ```sh
-# "failed to dial" in xray-core.log
+# "failed to dial" in xray-core-<uuid>.log
 # 1. Server reachable?
 nc -zv <server_host> <server_port>
 # or:
@@ -517,7 +609,7 @@ ping <server_host>
 # Check: GUI → Instance → Server Port
 
 # 3. Reality handshake failure in log:
-tail -50 /var/log/xray-core.log | grep -i reality
+tail -50 /var/log/xray-core-<uuid>.log | grep -i reality
 # Common causes:
 # - Wrong PublicKey (pbk) — must match server's private key
 # - Wrong ShortID (sid) — must match server config
@@ -540,10 +632,10 @@ tail -50 /var/log/xray-core.log | grep -i reality
 # 1. Is watchdog enabled?
 # GUI → General → Enable Watchdog ✓
 
-# 2. Is intentional stop flag set?
-ls -la /var/run/xray_stopped.flag
+# 2. Is intentional stop flag set? (per instance)
+ls -la /var/run/xray_stopped_*.flag
 # If present — watchdog intentionally ignores. Remove to allow restart:
-rm -f /var/run/xray_stopped.flag
+rm -f /var/run/xray_stopped_<uuid>.flag
 
 # 3. Is cron running watchdog?
 crontab -l | grep xray
@@ -551,12 +643,12 @@ crontab -l | grep xray
 
 # 4. Check watchdog log
 tail -30 /var/log/xray-watchdog.log
-# "restart FAILED" → check xray-core.log for root cause
+# "restart FAILED" → check xray-core-<uuid>.log for root cause
 
 # Watchdog keeps restarting (restart loop)
-# Root cause: xray-core or tun2socks crash immediately after start
+# Root cause: xray-core crashes immediately after start
 # Fix the underlying issue first:
-/usr/local/bin/xray-core -test -c /usr/local/etc/xray-core/config.json
+configctl xray generate <uuid> > /tmp/cfg.json && /usr/local/bin/xray-core -test -c /tmp/cfg.json
 # Fix config, then watchdog will succeed
 ```
 
@@ -568,15 +660,14 @@ tail -30 /var/log/xray-watchdog.log
 # Check installed version
 /usr/local/bin/xray-core version
 
-# Version 1.x issues:
-# - "xhttp" transport → not supported, use "splithttp" (plugin auto-normalizes)
-# - REALITY + splithttp → NOT supported at all in 1.x
-# - Some security features missing
+# v4.0.0 targets xray-core 26.10+ (native FreeBSD TUN inbound with
+# autoSystemRoutingTable / autoOutboundsInterface / autoSystemDnsToGateway).
+# On older builds only the legacy tun2socks driver works.
 
 # Upgrade to latest:
 fetch -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-freebsd-64.zip
 cd /tmp && unzip -o xray.zip xray
-# Stop running instance first:
+# Stop running instances first:
 configctl xray stop
 install -m 0755 /tmp/xray /usr/local/bin/xray-core
 configctl xray start
@@ -594,19 +685,20 @@ ping -c 5 <server_host>
 # GUI → Diagnostics tab shows Ping RTT
 
 # 2. Check if tunnel is overloaded
-netstat -ibn | grep proxytun2socks0
+netstat -ibn | grep tun100
 # Compare Ibytes/Obytes over time
 
 # 3. Try lowering MTU
 # GUI → Instance → MTU → 1400 (or 1300 for double encapsulation)
 
 # 4. Check server load — the VPN server itself may be slow
+#    With Load Balancing on, leastPing picks the node with the lowest RTT
 
 # CPU/memory usage
 ps aux | grep -E 'xray|tun2socks' | awk '{print $3, $4, $11}'
 # Column 1 = %CPU, Column 2 = %MEM, Column 3 = process
-# xray-core typically uses <5% CPU, ~30MB RAM
-# tun2socks typically uses <3% CPU, ~15MB RAM
+# xray-core typically uses <5% CPU, ~30MB RAM (a bit more with the native TUN stack)
+# tun2socks (legacy driver) typically uses <3% CPU, ~15MB RAM
 ```
 
 ---
@@ -621,7 +713,7 @@ ls -la /usr/local/tun2socks/
 # Directories should be drwxr-x--- (0750)
 
 # Fix permissions:
-chmod 0640 /usr/local/etc/xray-core/config.json
+chmod 0640 /usr/local/etc/xray-core/config-<uuid>.json
 chmod 0750 /usr/local/etc/xray-core/
 
 # Binary not executable
@@ -646,18 +738,21 @@ service configd restart
 # Multiple xray-core or tun2socks processes
 ps aux | grep -E 'xray-core|tun2socks' | grep -v grep
 
-# If more than one of each — kill all and restart cleanly:
+# If more than one per instance — kill all and restart cleanly:
 pkill -f xray-core
 pkill -f tun2socks
-rm -f /var/run/xray_core.pid /var/run/tun2socks.pid /var/run/xray_start.lock
+rm -f /var/run/xray_core_*.pid /var/run/tun2socks_*.pid /var/run/xray_start_*.lock
 sleep 1
 configctl xray start
 
-# PID file exists but process is dead
-cat /var/run/xray_core.pid
+# Stale TUN after an unclean kill (native driver):
+ifconfig tun100 destroy
+
+# PID file exists but process is dead (per instance)
+cat /var/run/xray_core_<uuid>.pid
 ps -p <PID>
 # If "No such process" — stale PID file
-rm -f /var/run/xray_core.pid /var/run/tun2socks.pid
+rm -f /var/run/xray_core_<uuid>.pid
 configctl xray start
 ```
 
@@ -681,9 +776,13 @@ cat /etc/resolv.conf
 # Add DNS server (e.g. 1.1.1.1) with Gateway = PROXYTUN_GW
 # This routes DNS queries through the VPN tunnel
 
-# 4. Alternatively, use xray-core's built-in DNS
-# In Custom Config mode, add "dns" section to config.json:
-# {"dns": {"servers": ["1.1.1.1", "8.8.8.8"]}}
+# 4. Or let Xray answer DNS itself:
+# Instance dialog → DNS Mode → Hijack
+# Port-53 traffic entering the tunnel is resolved inside xray
+# (dns module + dns-out outbound + routing rule are generated automatically)
+
+# 5. In raw mode, add the dns section yourself:
+# {"dns": {"servers": ["1.1.1.1"]}, "outbounds": [{"tag":"dns-out","protocol":"dns"}]}
 ```
 
 ---
@@ -701,9 +800,9 @@ pfctl -sr | grep PROXYTUN
 pfctl -t <alias_name> -T show
 # Should list IPs/networks
 
-# 3. Check gateway is up
-netstat -rn | grep proxytun
-# Should show gateway 10.255.0.2 through proxytun2socks0
+# 3. Check gateway is up (selective mode)
+netstat -rn | grep tun
+# Should show 10.255.0.1 (Far Gateway) reachable through tun100
 
 # 4. Gateway marked as down?
 # GUI → System → Gateways → Status
@@ -712,6 +811,10 @@ netstat -rn | grep proxytun
 # 5. Rules order matters! VPN rule must be ABOVE the default allow rule
 # GUI → Firewall → Rules → LAN
 # Drag VPN rule above the "Default allow LAN" rule
+
+# 6. Engine-level routing: check the Routing tab rules —
+#    a geosite/geoip rule may send the destination direct
+#    (geoip.dat/geosite.dat must exist: ls /usr/local/etc/xray-core/)
 ```
 
 ---
@@ -740,8 +843,8 @@ netstat -rn | grep proxytun
 
 | Log | Path | Contains | Rotation |
 |---|---|---|---|
-| Xray Core | `/var/log/xray-core.log` | xray-core and tun2socks stderr | 600 KB, 3 files |
-| Boot | `/tmp/xray_syshook.log` | Auto-start, IP, firewall reload | 50 KB, in-script |
+| Xray Core (per instance) | `/var/log/xray-core-<uuid>.log` | xray-core stdout/stderr (and legacy tun2socks) | 600 KB, 3 files |
+| Boot | `/tmp/xray_syshook.log` | Auto-start, TUN checks, firewall reload | 50 KB, in-script |
 | Watchdog | `/var/log/xray-watchdog.log` | Crash detection, restarts | 100 KB, 3 files |
 | PHP errors | `/var/lib/php/tmp/PHP_errors.log` | OPNsense PHP (GUI, API) | OPNsense managed |
 | System | `/var/log/system/latest.log` | configd errors | OPNsense managed |
@@ -751,37 +854,40 @@ netstat -rn | grep proxytun
 ### All Plugin Commands
 
 ```sh
-# Service management
-configctl xray start                  # start xray-core + tun2socks
-configctl xray stop                   # stop both services
-configctl xray restart                # stop + start
-configctl xray reconfigure            # called by Apply button (stop + start)
+# Service management (add <uuid> to target one instance)
+configctl xray start [uuid]            # start all enabled instances / one
+configctl xray stop [uuid]             # stop
+configctl xray restart [uuid]          # stop + start
+configctl xray reconfigure [uuid]       # called by Apply button (stop + start)
 
 # Diagnostics
-configctl xray status                 # JSON: service status
-configctl xray version                # JSON: plugin version
-configctl xray validate               # dry-run config validation
-configctl xray testconnect            # curl test through SOCKS5 proxy
-configctl xray ifstats                # JSON: TUN interface stats, uptime, RTT
+configctl xray status [uuid]           # JSON: status of the (first/one) instance
+configctl xray statusall               # JSON: status of ALL instances
+configctl xray version                 # JSON: plugin version
+configctl xray validate [uuid]          # dry-run config validation (xray -test)
+configctl xray generate [uuid]          # print the generated config.json
+configctl xray testconnect [uuid]      # curl test through SOCKS5
+configctl xray ifstats [uuid]          # JSON: TUN stats, uptime, RTT, environment
+configctl xray validatefile <path>     # validate a /tmp/xray-val-* draft (GUI button)
 
 # Logs
-configctl xray log                    # last 150 lines of boot log
-configctl xray xraylog                # last 200 lines of xray-core log
+configctl xray log [uuid]              # last 150 lines of boot log
+configctl xray xraylog [uuid]          # last 200 lines of xray-core log
 
 # Manual script execution (for debugging)
 /usr/local/opnsense/scripts/Xray/xray-service-control.php start
-/usr/local/opnsense/scripts/Xray/xray-service-control.php status
+/usr/local/opnsense/scripts/Xray/xray-service-control.php statusall
 /usr/local/opnsense/scripts/Xray/xray-service-control.php validate
 /usr/local/opnsense/scripts/Xray/xray-ifstats.php
 /usr/local/opnsense/scripts/Xray/xray-testconnect.php
 
 # System
-ps aux | grep -E 'xray|tun2socks'    # running processes
-ifconfig proxytun2socks0              # TUN interface
-netstat -rn | grep proxytun           # routing table
-netstat -ibn | grep proxytun          # interface traffic stats
-sockstat -4l | grep 10808             # who's using SOCKS5 port
-tail -f /var/log/xray-core.log        # live log monitoring
+ps aux | grep -E 'xray|tun2socks'     # running processes
+ifconfig tun100                        # TUN interface (native driver)
+netstat -rn | grep tun                 # routing table
+netstat -ibn | grep tun               # interface traffic stats
+sockstat -4l | grep 10808              # who's using SOCKS5 port
+tail -f /var/log/xray-core-<uuid>.log # live log monitoring
 ```
 
 ---
@@ -795,9 +901,9 @@ sh install.sh
 
 # Nuclear option — clean everything and start fresh
 configctl xray stop
-rm -f /var/run/xray_*.pid /var/run/xray_*.lock /var/run/xray_*.flag
-rm -f /usr/local/etc/xray-core/config.json
-rm -f /usr/local/tun2socks/config.yaml
+rm -f /var/run/xray_*.pid /var/run/tun2socks_*.pid /var/run/xray_*.lock /var/run/xray_*.flag
+rm -f /usr/local/etc/xray-core/config-*.json
+rm -f /usr/local/tun2socks/config-*.yaml
 sh install.sh uninstall
 sh install.sh
 # Then re-import VLESS link and Apply
@@ -810,40 +916,57 @@ sh install.sh
 ```
 os-xray/
 ├── install.sh
-├── CHANGELOG.md
+├── Changelog.md
 └── plugin/
     ├── +MANIFEST                               ← FreeBSD pkg metadata
     ├── etc/
     │   ├── inc/plugins.inc.d/
     │   │   └── xray.inc                        ← service registration, boot hook, cron watchdog
     │   ├── newsyslog.conf.d/
-    │   │   └── xray.conf                       ← xray-core.log and xray-watchdog.log rotation
+    │   │   └── xray.conf                       ← xray-core and xray-watchdog log rotation
     │   └── rc.syshook.d/start/
-    │       └── 50-xray                         ← auto-start after reboot
+    │       └── 50-xray                         ← auto-start after reboot (driver-aware)
     ├── scripts/Xray/
-    │   ├── xray-service-control.php            ← xray-core and tun2socks management
+    │   ├── xray-service-control.php            ← service control (drivers, generate, validatefile)
     │   ├── xray-watchdog.php                   ← watchdog: process check and restart
-    │   ├── xray-ifstats.php                    ← TUN interface stats for Diagnostics
+    │   ├── xray-ifstats.php                    ← TUN stats + environment for Diagnostics
     │   └── xray-testconnect.php                ← SOCKS5 connection test
     ├── service/conf/actions.d/
     │   └── actions_xray.conf                   ← configd actions
+    ├── web/js/xray/                            ← CodeMirror bundle (Raw JSON editor)
     └── mvc/app/
         ├── models/OPNsense/Xray/
-        │   ├── General.xml / General.php       ← model: enable, watchdog (v1.0.1)
-        │   ├── Instance.xml / Instance.php     ← model: connection parameters (v1.0.5)
-        │   ├── ACL/ACL.xml                     ← access control (page-vpn-xray)
-        │   └── Menu/Menu.xml                   ← VPN → Xray menu item
+        │   ├── General.xml / General.php       ← model: enable, watchdog
+        │   ├── Instance.xml / Instance.php     ← model: instances (tun/dns/lb/srv fields)
+        │   ├── Group.xml / Group.php           ← model: server groups + servers
+        │   ├── RoutingRule.xml / RoutingRule.php ← model: routing rules (v4.0.0)
+        │   ├── ACL/ACL.xml                      ← access control (page-vpn-xray)
+        │   └── Menu/Menu.xml                    ← VPN → Xray menu item
+        ├── library/OPNsense/Xray/
+        │   ├── ConfigBuilder.php               ← THE config generator (v4.0.0)
+        │   └── VlessLink.php                   ← vless:// link parser
         ├── controllers/OPNsense/Xray/
         │   ├── IndexController.php
         │   ├── forms/general.xml
         │   ├── forms/instance.xml
+        │   ├── forms/group.xml / forms/server.xml
+        │   ├── forms/rule.xml
         │   └── Api/
         │       ├── GeneralController.php
         │       ├── InstanceController.php
-        │       ├── ServiceController.php       ← start/stop/restart/status/version/log/validate/diagnostics/testconnect
-        │       └── ImportController.php        ← VLESS link parser
+        │       ├── GroupController.php          ← groups CRUD, subscription import, refresh
+        │       ├── RuleController.php          ← routing rules CRUD (v4.0.0)
+        │       ├── ServiceController.php       ← + validateConfig (draft), previewConfig
+        │       └── ImportController.php        ← VLESS link parse
         └── views/OPNsense/Xray/
-            └── general.volt
+            ├── general.volt                     ← tabs, dialogs, preview/nginx modals
+            └── partials/
+                ├── tab_instances.volt
+                ├── tab_groups.volt
+                ├── tab_routing.volt             ← routing rules grid (v4.0.0)
+                ├── tab_diagnostics.volt
+                ├── tab_logs.volt
+                └── scripts.volt                 ← page logic (CodeMirror, snippets, sync)
 ```
 
 ---
@@ -852,14 +975,20 @@ os-xray/
 
 The installer will notify you if binaries are missing. Below are commands for manual installation.
 
-**xray-core** — [github.com/XTLS/Xray-core/releases](https://github.com/XTLS/Xray-core/releases)
+**xray-core** — [github.com/XTLS/Xray-core/releases](https://github.com/XTLS/Xray-core/releases) (26.10+ required for the native TUN driver)
 ```sh
 fetch -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-freebsd-64.zip
 cd /tmp && unzip xray.zip xray
 install -m 0755 /tmp/xray /usr/local/bin/xray-core
 ```
 
-**tun2socks** — [github.com/xjasonlyu/tun2socks/releases](https://github.com/xjasonlyu/tun2socks/releases)
+**geoip.dat / geosite.dat** — for GeoIP/GeoSite routing rules (normally installed by `install.sh`)
+```sh
+fetch -o /usr/local/etc/xray-core/geoip.dat https://github.com/XTLS/Xray-core/releases/latest/download/geoip.dat
+fetch -o /usr/local/etc/xray-core/geosite.dat https://github.com/XTLS/Xray-core/releases/latest/download/geosite.dat
+```
+
+**tun2socks** (optional, legacy TUN driver only) — [github.com/xjasonlyu/tun2socks/releases](https://github.com/xjasonlyu/tun2socks/releases)
 ```sh
 fetch -o /tmp/tun2socks.zip https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-freebsd-amd64.zip
 cd /tmp && unzip tun2socks.zip
@@ -877,8 +1006,11 @@ Full changelog in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | Changes |
 |---------|---------|
-| 3.0.1  | Fix multiple multi-instance bugs |
-| 3.0.0  | Multi-instance (ArrayField), per-instance state in table, Import VLESS and Validate Config inside dialog, custom config use SOCKS5 from the form, rename uuid→vless_uuid, migrate into install.sh |
+| 4.0.0   | **Native Xray mechanisms**: built-in TUN inbound (`tun_driver`), Routing tab (domain/ip/port/geoip/geosite rules), balancer + burstObservatory (leastPing/roundRobin/leastLoad/random), server-side VLESS inbound (ws/gRPC/h2/TCP, TLS/Reality, nginx snippet), Raw JSON mode with CodeMirror + draft validation, ConfigBuilder, DNS hijack, full-tunnel option (`net.fibs=2`), xray-core 26.10+ required, geo dat files installed, v3.x migration |
+| 3.2.1   | Log rotation fix (daemon -H -o + SIGHUP reopen), tun2socks `--config` |
+| 3.2.0   | Fork: server groups, subscription import, Refresh, node_source switch, VlessLink class |
+| 3.0.1   | Fix multiple multi-instance bugs |
+| 3.0.0   | Multi-instance (ArrayField), per-instance state in table, Import VLESS and Validate Config inside dialog, custom config use SOCKS5 from the form, rename uuid→vless_uuid, migrate into install.sh |
 | 2.0.0   | Custom Config (wizard/custom), VLESS import with auto-generated config.json for any transport, xhttp↔splithttp normalization, xray-core version check on install |
 | 1.10.0  | Version check on install, `configctl xray version`, API version endpoint, Outbound NAT in README |
 | 1.9.3   | P1 bugfixes (implode, socks5_port, validate tempfile, dedup), Bypass Networks, Copy Debug Info, Ping RTT, Diagnostics auto-refresh |

@@ -2,6 +2,9 @@
 <?php
 
 require_once('config.inc');
+require_once('/usr/local/opnsense/mvc/app/library/OPNsense/Xray/ConfigBuilder.php');
+
+use OPNsense\Xray\ConfigBuilder;
 
 // ─── Shared constants (not per-instance) ─────────────────────────────────────
 define('XRAY_BIN',          '/usr/local/bin/xray-core');
@@ -47,49 +50,15 @@ function xray_instance_log(string $inst_uuid): string
 // ─── Read config from OPNsense config.xml ────────────────────────────────────
 
 /**
- * Парсит один <instance> SimpleXMLElement в плоский PHP-массив конфига.
- * globalEnabled — значение general.enabled (общий выключатель плагина).
- */
-function xray_parse_instance($inst, bool $globalEnabled): array
-{
-    // B6: нормализация loglevel.
-    // Старые: ключ "e" (до v1.0.1) → "error"
-    // Новые:  ключ "loglevel_error" (v1.0.1+) → "error"
-    $rawLevel = (string)($inst->loglevel ?? 'warning');
-    $levelMap = [
-        'e'              => 'error',
-        'loglevel_error' => 'error',
-    ];
-    $loglevel = $levelMap[$rawLevel] ?? ($rawLevel ?: 'warning');
-
-    return [
-        'enabled'         => $globalEnabled && (string)($inst->enabled ?? '1') === '1',
-        'name'            => (string)($inst->name             ?? 'default'),
-        'outbound_config' => (string)($inst->outbound_config  ?? ''),
-        // v3.1.0: UUID выбранного сервера в группе.
-        'server'          => (string)($inst->server           ?? ''),
-        // v3.2.0: откуда берётся узел — 'config' | 'group'. Пусто = наследие
-        // v3.1.0: узел берётся из server, если он заполнен.
-        'node_source'     => (string)($inst->node_source      ?? ''),
-        'socks5_listen'   => (string)($inst->socks5_listen    ?? '127.0.0.1') ?: '127.0.0.1',
-        'socks5_port'     => (int)(string)($inst->socks5_port ?? 10808) ?: 10808,
-        'tun_iface'       => (string)($inst->tun_interface    ?? 'proxytun2socks0'),
-        'mtu'             => (int)(string)($inst->mtu         ?? 1500),
-        'loglevel'        => $loglevel,
-        'bypass_networks' => (string)($inst->bypass_networks  ?? '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16')
-                            ?: '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16',
-    ];
-}
-
-/**
  * Читает все инстансы из config.xml.
- * Возвращает массив, индексированный по inst_uuid (UUID инстанса OPNsense).
+ * Парсинг полей делегирован ConfigBuilder::parseInstance() (v4.0.0).
+ * Возвращает массив, индексированный по inst_uuid.
  */
 function xray_get_all_instances(): array
 {
     $cfg = OPNsense\Core\Config::getInstance()->object();
     $g   = $cfg->OPNsense->xray->general   ?? null;
-    $ins = $cfg->OPNsense->xray->instances  ?? null;
+    $ins = $cfg->OPNsense->xray->instances ?? null;
 
     $globalEnabled = (string)($g->enabled ?? '0') === '1';
 
@@ -99,67 +68,16 @@ function xray_get_all_instances(): array
 
     $result = [];
     foreach ($ins->instance as $inst) {
-        // SimpleXML: атрибуты читаются через $element['attr']
         $inst_uuid = (string)$inst['uuid'];
         if ($inst_uuid === '') {
             continue;
         }
-        $c = xray_parse_instance($inst, $globalEnabled);
+        $c = ConfigBuilder::parseInstance($inst);
         $c['inst_uuid'] = $inst_uuid;
+        $c['enabled']    = $globalEnabled && (string)($inst->enabled ?? '1') === '1';
         $result[$inst_uuid] = $c;
     }
     return $result;
-}
-
-/**
- * v3.1.0: возвращает outbound_config сервера из //OPNsense/xray/groups/server
- * по его UUID, либо '' если сервер не найден.
- */
-function xray_server_outbound(string $server_uuid): string
-{
-    if ($server_uuid === '') {
-        return '';
-    }
-    $cfg = OPNsense\Core\Config::getInstance()->object();
-    $grp = $cfg->OPNsense->xray->groups ?? null;
-    if (!$grp) {
-        return '';
-    }
-    foreach ($grp->server as $srv) {
-        if ((string)$srv['uuid'] === $server_uuid) {
-            return (string)($srv->outbound_config ?? '');
-        }
-    }
-    return '';
-}
-
-/**
- * v3.2.0: единственная точка, решающая, откуда инстанс берёт узел.
- *
- *   node_source = 'group'  -> сервер группы (ошибка, если он пропал);
- *   node_source = 'config' -> outbound_config инстанса;
- *   пусто (конфиг от v3.1.0) -> сервер, если он выбран, иначе outbound_config.
- *
- * @return array{raw:string,error:string}
- */
-function xray_active_outbound(array $c): array
-{
-    $mode   = (string)($c['node_source'] ?? '');
-    $server = (string)($c['server'] ?? '');
-    $useGroup = $mode === 'group' || ($mode === '' && $server !== '');
-
-    if ($useGroup) {
-        if ($server === '') {
-            return ['raw' => '', 'error' => 'node source is "group" but no server is selected'];
-        }
-        $raw = trim(xray_server_outbound($server));
-        if ($raw === '') {
-            return ['raw' => '', 'error' => "active server {$server} not found in groups"];
-        }
-        return ['raw' => $raw, 'error' => ''];
-    }
-
-    return ['raw' => trim((string)($c['outbound_config'] ?? '')), 'error' => ''];
 }
 
 /**
@@ -179,85 +97,41 @@ function xray_get_config(string $inst_uuid = ''): array
     return reset($all);
 }
 
-// ─── Build routing block from comma-separated CIDR string ────────────────────
-function xray_build_routing(string $bypassRaw): array
+/**
+ * v4.0.0: сборка полного конфига через ConfigBuilder.
+ * Ошибки конфигурации печатаются и возвращают null.
+ */
+function xray_build_config(string $inst_uuid, bool $verbose = true): ?array
 {
-    $bypassNets = array_values(array_filter(array_map('trim', explode(',', $bypassRaw))));
-    if (empty($bypassNets)) {
-        $bypassNets = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+    try {
+        return ConfigBuilder::buildForInstance($inst_uuid);
+    } catch (\RuntimeException $e) {
+        if ($verbose) {
+            echo "ERROR: {$e->getMessage()}\n";
+        }
+        return null;
     }
-    return [
-        'domainStrategy' => 'IPIfNonMatch',
-        'rules' => [[
-            'type'        => 'field',
-            'ip'          => $bypassNets,
-            'outboundTag' => 'direct',
-        ]],
-    ];
-}
-
-// ─── P2.5: xhttp/splithttp compatibility ─────────────────────────────────────
-function xray_normalize_transport(string $json): string
-{
-    if (!file_exists(XRAY_BIN)) {
-        return $json;
-    }
-    exec(escapeshellarg(XRAY_BIN) . ' version 2>/dev/null', $out);
-    $verLine = $out[0] ?? '';
-
-    if (preg_match('/Xray\s+1\./', $verLine)) {
-        $json = str_replace('"xhttp"', '"splithttp"', $json);
-        $json = str_replace('"xhttpSettings"', '"splithttpSettings"', $json);
-    }
-
-    return $json;
 }
 
 // ─── Write xray config.json (per-instance) ───────────────────────────────────
-function xray_write_config(array $c): void
+function xray_write_config(string $inst_uuid): bool
 {
     if (!is_dir(XRAY_CONF_DIR)) {
         mkdir(XRAY_CONF_DIR, 0750, true);
     }
 
-    $inst_uuid = $c['inst_uuid'];
-    $confFile  = xray_conf_path($inst_uuid);
+    $config = xray_build_config($inst_uuid);
+    if ($config === null) {
+        return false;
+    }
 
-    $active = xray_active_outbound($c);
-    if ($active['error'] !== '') {
-        echo "ERROR: {$active['error']}\n";
-        return;
-    }
-    $raw = $active['raw'];
-    if ($raw === '') {
-        echo "ERROR: outbound_config is empty\n";
-        return;
-    }
-    $outbound = json_decode($raw, true);
-    if ($outbound === null) {
-        echo "ERROR: outbound_config is not valid JSON\n";
-        return;
-    }
-    $config = [
-        'log'      => ['loglevel' => $c['loglevel'] ?? 'warning'],
-        'inbounds' => [[
-            'tag'      => 'socks-in',
-            'port'     => (int)($c['socks5_port'] ?? 10808),
-            'listen'   => $c['socks5_listen'] ?? '127.0.0.1',
-            'protocol' => 'socks',
-            'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => $c['socks5_listen'] ?? '127.0.0.1'],
-        ]],
-        'outbounds' => [$outbound, ['tag' => 'direct', 'protocol' => 'freedom']],
-        'routing'   => xray_build_routing($c['bypass_networks'] ?? ''),
-    ];
-    $json = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    $json = xray_normalize_transport($json);
-
-    file_put_contents($confFile, $json);
+    $confFile = xray_conf_path($inst_uuid);
+    file_put_contents($confFile, ConfigBuilder::render($config));
     chmod($confFile, 0640);
+    return true;
 }
 
-// ─── Write tun2socks config.yaml (per-instance) ──────────────────────────────
+// ─── Write tun2socks config.yaml (per-instance, legacy driver) ───────────────
 function t2s_write_config(array $c): void
 {
     if (!is_dir(T2S_CONF_DIR)) {
@@ -339,7 +213,7 @@ function proc_start(string $bin, string $args, string $pidfile, string $logfile 
        . ' ' . escapeshellarg($bin) . ' ' . $args . ' > /dev/null 2>&1 &');
 }
 
-// ─── Per-instance lock helpers ────────────────────────────────────────────────
+// ─── Per-instance lock helpers ───────────────────────────────────────────────
 /**
  * Захватывает эксклюзивный non-blocking lock для конкретного инстанса.
  * Возвращает дескриптор при успехе, false если lock уже захвачен.
@@ -382,7 +256,7 @@ function xray_validate_config(string $confFile): bool
         return true;
     }
     if (!file_exists($confFile)) {
-        echo "ERROR: config file not found after write: {$confFile}\n";
+        echo "ERROR: config file not found: {$confFile}\n";
         return false;
     }
     exec(escapeshellarg(XRAY_BIN) . ' -test -c ' . escapeshellarg($confFile) . ' 2>&1', $out, $rc);
@@ -436,7 +310,22 @@ function lo0_alias_remove(string $addr): void
     }
 }
 
-// ─── B9: TUN interface teardown ───────────────────────────────────────────────
+// ─── TUN interface helpers ────────────────────────────────────────────────────
+
+function tun_iface_up(string $iface): bool
+{
+    if ($iface === '') {
+        return false;
+    }
+    exec('/sbin/ifconfig ' . escapeshellarg($iface) . ' 2>/dev/null', $out, $rc);
+    return $rc === 0;
+}
+
+/**
+ * B9: уничтожение TUN-интерфейса. Для xray-драйвера — подстраховка после
+ * SIGKILL (чистый shutdown уничтожает интерфейс сам), для tun2socks — не
+ * вызывается (интерфейс принадлежит t2s).
+ */
 function tun_destroy(string $iface): void
 {
     if (empty($iface)) {
@@ -452,23 +341,33 @@ function tun_destroy(string $iface): void
 // ─── High-level per-instance actions ─────────────────────────────────────────
 
 /**
- * do_stop() — останавливает tun2socks и xray-core инстанса, выставляет stopped flag.
+ * do_stop() — останавливает инстанс (xray-core и, для legacy-драйвера,
+ * tun2socks), выставляет stopped flag.
  */
 function do_stop(string $inst_uuid, ?string $tunIface = null): void
 {
+    $c      = xray_get_config($inst_uuid);
+    $driver = ($c['tun_driver'] ?? 'tun2socks') === 'xray' ? 'xray' : 'tun2socks';
     if ($tunIface === null) {
-        $c        = xray_get_config($inst_uuid);
         $tunIface = $c['tun_iface'] ?? 'proxytun2socks0';
     }
 
-    // Останавливаем tun2socks первым — он держит TUN open.
+    // Останавливаем tun2socks первым — он держит TUN open (legacy driver)
     proc_kill(t2s_pid_path($inst_uuid));
     // Останавливаем xray-core
     proc_kill(xray_pid_path($inst_uuid));
 
+    // v4.0.0: xray-драйвер — уничтожаем TUN, если демон убит нечисто
+    // (после SIGKILL интерфейс остаётся и мешает следующему старту)
+    if ($driver === 'xray') {
+        tun_destroy($tunIface);
+    }
+
     // Удаляем lo0 alias если был добавлен
     $c2 = xray_get_config($inst_uuid);
-    lo0_alias_remove($c2['socks5_listen'] ?? '127.0.0.1');
+    if (!empty($c2) && !empty($c2['socks5_enabled'])) {
+        lo0_alias_remove($c2['socks5_listen'] ?? '127.0.0.1');
+    }
 
     // БАГ-5 FIX: флаг намеренной остановки — watchdog не перезапускает
     file_put_contents(xray_stopped_flag($inst_uuid), date('Y-m-d H:i:s'));
@@ -477,7 +376,8 @@ function do_stop(string $inst_uuid, ?string $tunIface = null): void
 }
 
 /**
- * do_start() — генерирует конфиги, запускает xray-core и tun2socks инстанса.
+ * do_start() — генерирует конфиг через ConfigBuilder, запускает xray-core и,
+ * для legacy-драйвера, tun2socks.
  */
 function do_start(array $c): bool
 {
@@ -485,12 +385,15 @@ function do_start(array $c): bool
         echo "ERROR: xray-core not found at " . XRAY_BIN . "\n";
         return false;
     }
-    if (!file_exists(T2S_BIN)) {
-        echo "ERROR: tun2socks not found at " . T2S_BIN . "\n";
+
+    $driver    = ($c['tun_driver'] ?? 'tun2socks') === 'xray' ? 'xray' : 'tun2socks';
+    $inst_uuid = $c['inst_uuid'];
+
+    if ($driver === 'tun2socks' && !file_exists(T2S_BIN)) {
+        echo "ERROR: tun2socks not found at " . T2S_BIN
+           . " — switch the instance TUN driver to \"Xray TUN inbound (native)\"\n";
         return false;
     }
-
-    $inst_uuid = $c['inst_uuid'];
 
     // B7: захватываем per-instance lock перед запуском
     $lock = lock_acquire($inst_uuid);
@@ -503,10 +406,16 @@ function do_start(array $c): bool
         // БАГ-5 FIX: снимаем флаг намеренной остановки
         @unlink(xray_stopped_flag($inst_uuid));
 
-        xray_write_config($c);
-        t2s_write_config($c);
+        if (!xray_write_config($inst_uuid)) {
+            return false;
+        }
+        if ($driver === 'tun2socks') {
+            t2s_write_config($c);
+        }
 
-        lo0_alias_ensure($c['socks5_listen']);
+        if (!empty($c['socks5_enabled'])) {
+            lo0_alias_ensure($c['socks5_listen']);
+        }
 
         // BUG-3 FIX: валидация конфига до запуска
         if (!xray_validate_config(xray_conf_path($inst_uuid))) {
@@ -518,12 +427,13 @@ function do_start(array $c): bool
             proc_start(XRAY_BIN, 'run -c ' . escapeshellarg(xray_conf_path($inst_uuid)), xray_pid_path($inst_uuid), $instLog);
             usleep(800000);
         }
-        if (!proc_is_running(t2s_pid_path($inst_uuid))) {
+        if ($driver === 'tun2socks' && !proc_is_running(t2s_pid_path($inst_uuid))) {
             proc_start(T2S_BIN, '--config ' . escapeshellarg(t2s_conf_path($inst_uuid)), t2s_pid_path($inst_uuid), $instLog);
             usleep(800000);
         }
 
-        // Назначаем IP на TUN через syshook (ждёт TUN, читает IP из config, reload firewall)
+        // Назначаем IP на TUN через syshook (ждёт TUN, для tun2socks читает IP
+        // из config, reload firewall)
         exec('/bin/sh /usr/local/etc/rc.syshook.d/start/50-xray ' . escapeshellarg($inst_uuid) . ' &');
 
         echo "Started.\n";
@@ -534,36 +444,60 @@ function do_start(array $c): bool
     }
 }
 
+/**
+ * Статус одного инстанса. v4.0.0: для xray-драйвера tun-статус берётся из
+ * наличия интерфейса (tun2socks-ключ = "n/a"); raw-инстансы могут не иметь
+ * tun inbound вовсе, поэтому ok = xray-core running.
+ */
+function xray_instance_status(array $c): array
+{
+    $inst_uuid = $c['inst_uuid'];
+    $xray = proc_is_running(xray_pid_path($inst_uuid));
+    $driver = ($c['tun_driver'] ?? 'tun2socks') === 'xray' ? 'xray' : 'tun2socks';
+
+    if ($driver === 'xray') {
+        $tun = tun_iface_up($c['tun_iface'] ?? '');
+        return [
+            'status'    => $xray ? 'ok' : 'stopped',
+            'xray_core' => $xray ? 'running' : 'stopped',
+            'tun'       => $tun ? 'running' : 'stopped',
+            'tun2socks' => 'n/a',
+            'driver'    => 'xray',
+            'inst_uuid' => $inst_uuid,
+        ];
+    }
+
+    $t2s = proc_is_running(t2s_pid_path($inst_uuid));
+    return [
+        'status'    => ($xray && $t2s) ? 'ok' : 'stopped',
+        'xray_core' => $xray ? 'running' : 'stopped',
+        'tun2socks' => $t2s ? 'running' : 'stopped',
+        'driver'    => 'tun2socks',
+        'inst_uuid' => $inst_uuid,
+    ];
+}
+
 function do_status(string $inst_uuid = ''): void
 {
     if ($inst_uuid !== '') {
-        $xray = proc_is_running(xray_pid_path($inst_uuid));
-        $t2s  = proc_is_running(t2s_pid_path($inst_uuid));
-        echo json_encode([
-            'status'      => ($xray && $t2s) ? 'ok' : 'stopped',
-            'xray_core'   => $xray ? 'running' : 'stopped',
-            'tun2socks'   => $t2s  ? 'running' : 'stopped',
-            'inst_uuid'   => $inst_uuid,
-        ]) . "\n";
+        $c = xray_get_config($inst_uuid);
+        if (empty($c)) {
+            echo json_encode(['status' => 'stopped']) . "\n";
+            return;
+        }
+        echo json_encode(xray_instance_status($c)) . "\n";
         return;
     }
 
     // Без UUID: статус всех инстансов + агрегированный статус
     $all = xray_get_all_instances();
     if (empty($all)) {
-        echo json_encode(['status' => 'stopped', 'xray_core' => 'stopped', 'tun2socks' => 'stopped']) . "\n";
+        echo json_encode(['status' => 'stopped', 'xray_core' => 'stopped']) . "\n";
         return;
     }
     // Для совместимости с текущим GUI: возвращаем статус первого инстанса
     $first = reset($all);
-    $uuid0 = $first['inst_uuid'];
-    $xray  = proc_is_running(xray_pid_path($uuid0));
-    $t2s   = proc_is_running(t2s_pid_path($uuid0));
-    echo json_encode([
-        'status'    => ($xray && $t2s) ? 'ok' : 'stopped',
-        'xray_core' => $xray ? 'running' : 'stopped',
-        'tun2socks' => $t2s  ? 'running' : 'stopped',
-    ]) . "\n";
+    echo json_encode(xray_instance_status($first)) . "\n";
 }
 
 function do_status_all(): void
@@ -571,14 +505,9 @@ function do_status_all(): void
     $all    = xray_get_all_instances();
     $result = [];
     foreach ($all as $inst_uuid => $c) {
-        $xray = proc_is_running(xray_pid_path($inst_uuid));
-        $t2s  = proc_is_running(t2s_pid_path($inst_uuid));
-        $result[$inst_uuid] = [
-            'name'      => $c['name'],
-            'status'    => ($xray && $t2s) ? 'ok' : 'stopped',
-            'xray_core' => $xray ? 'running' : 'stopped',
-            'tun2socks' => $t2s  ? 'running' : 'stopped',
-        ];
+        $st = xray_instance_status($c);
+        $st['name'] = $c['name'];
+        $result[$inst_uuid] = $st;
     }
     echo json_encode($result) . "\n";
 }
@@ -708,6 +637,20 @@ switch ($action) {
         do_status_all();
         break;
 
+    case 'generate':
+        // v4.0.0: печать сгенерированного конфига (wizard) как есть (raw)
+        $c = $inst_uuid !== '' ? xray_get_config($inst_uuid) : xray_get_config();
+        if (empty($c)) {
+            echo "ERROR: No xray config found in OPNsense config.xml\n";
+            exit(1);
+        }
+        $config = xray_build_config($c['inst_uuid']);
+        if ($config === null) {
+            exit(1);
+        }
+        echo ConfigBuilder::render($config) . "\n";
+        exit(0);
+
     case 'validate':
         // БАГ-6 FIX: сухой прогон через временный файл (рабочий конфиг не перезаписывается)
         $c = $inst_uuid !== '' ? xray_get_config($inst_uuid) : xray_get_config();
@@ -722,47 +665,35 @@ switch ($action) {
         }
         $tmpConf = $tmpBase . '.json';
         @unlink($tmpBase);
+        $exitCode = 1;
         try {
-            $active = xray_active_outbound($c);
-            if ($active['error'] !== '') {
-                echo "ERROR: {$active['error']}\n";
-                exit(1);
-            }
-            $raw = $active['raw'];
-            if ($raw === '') {
-                echo "ERROR: outbound_config is empty\n";
-                exit(1);
-            }
-            $outbound = json_decode($raw, true);
-            if ($outbound === null) {
-                echo "ERROR: outbound_config is not valid JSON\n";
-                exit(1);
-            }
-            $config = [
-                'log'      => ['loglevel' => $c['loglevel'] ?? 'warning'],
-                'inbounds' => [[
-                    'tag'      => 'socks-in',
-                    'port'     => (int)($c['socks5_port'] ?? 10808),
-                    'listen'   => $c['socks5_listen'] ?? '127.0.0.1',
-                    'protocol' => 'socks',
-                    'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => $c['socks5_listen'] ?? '127.0.0.1'],
-                ]],
-                'outbounds' => [$outbound, ['tag' => 'direct', 'protocol' => 'freedom']],
-                'routing'   => xray_build_routing($c['bypass_networks'] ?? ''),
-            ];
-            $json = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            $json = xray_normalize_transport($json);
-            file_put_contents($tmpConf, $json);
-            chmod($tmpConf, 0600);
-            if (xray_validate_config($tmpConf)) {
-                echo "OK: config is valid\n";
-                exit(0);
-            } else {
-                exit(1);
+            $config = xray_build_config($c['inst_uuid']);
+            if ($config !== null) {
+                file_put_contents($tmpConf, ConfigBuilder::render($config));
+                chmod($tmpConf, 0600);
+                if (xray_validate_config($tmpConf)) {
+                    echo "OK: config is valid\n";
+                    $exitCode = 0;
+                }
             }
         } finally {
             @unlink($tmpConf);
         }
+        exit($exitCode);
+
+    case 'validatefile':
+        // v4.0.0: валидация произвольного файла-черновика (кнопка Validate
+        // Config в редакторе Raw JSON). Строгий белый список путей /tmp.
+        $path = isset($argv[2]) ? (string)$argv[2] : '';
+        if (!preg_match('#^/tmp/xray-val-[A-Za-z0-9._-]+$#', $path) || !is_file($path)) {
+            echo "ERROR: invalid validation file path\n";
+            exit(1);
+        }
+        if (xray_validate_config($path)) {
+            echo "OK: config is valid\n";
+            exit(0);
+        }
+        exit(1);
 
     case 'version':
         $ver = file_exists(XRAY_VERSION_FILE) ? trim(file_get_contents(XRAY_VERSION_FILE)) : 'unknown';
@@ -773,3 +704,4 @@ switch ($action) {
         echo "Unknown action: $action\n";
         exit(1);
 }
+

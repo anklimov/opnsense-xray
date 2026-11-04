@@ -15,10 +15,9 @@ function xray_configure(): array
 /**
  * BUG-1 FIX: убрана хрупкая goto-логика управления lock-файлом.
  *
- * v3.0.0: итерирует все инстансы из config.xml, для каждого:
- *   - Захватывает per-instance lock (xray_start_<uuid>.lock)
- *   - Запускает xray-core + tun2socks если не запущены
- *   - Ждёт TUN-интерфейс до 5 секунд
+ * v4.0.0: делегирует запуск скрипту xray-service-control.php — он один
+ * знает о драйверах TUN (xray/tun2socks), генерирует конфиг через
+ * ConfigBuilder и валидирует его перед стартом.
  */
 function xray_configure_do(bool $verbose = false): void
 {
@@ -26,110 +25,15 @@ function xray_configure_do(bool $verbose = false): void
         return;
     }
 
-    $cfg       = OPNsense\Core\Config::getInstance()->object();
-    $instances = $cfg->OPNsense->xray->instances ?? null;
-    if (!$instances) {
+    $ctrl = '/usr/local/opnsense/scripts/Xray/xray-service-control.php';
+    if (!file_exists($ctrl) || !file_exists('/usr/local/bin/xray-core')) {
         return;
     }
 
-    $xrayBin  = '/usr/local/bin/xray-core';
-    $t2sBin   = '/usr/local/tun2socks/tun2socks';
-
-    if (!file_exists($xrayBin) || !file_exists($t2sBin)) {
-        return;
-    }
-
-    foreach ($instances->instance as $inst) {
-        $inst_uuid = (string)$inst['uuid'];
-        if ($inst_uuid === '' || (string)($inst->enabled ?? '1') !== '1') {
-            continue;
-        }
-
-        $xrayConf  = "/usr/local/etc/xray-core/config-{$inst_uuid}.json";
-        $xrayPid   = "/var/run/xray_core_{$inst_uuid}.pid";
-        $t2sConf   = "/usr/local/tun2socks/config-{$inst_uuid}.yaml";
-        $t2sPid    = "/var/run/tun2socks_{$inst_uuid}.pid";
-        $lockFile  = "/var/run/xray_start_{$inst_uuid}.lock";
-        $tunIface  = (string)($inst->tun_interface ?? 'proxytun2socks0');
-
-        // BUG-1 FIX: per-instance lock без goto. Если lock занят — пропускаем.
-        $lockFd       = false;
-        $lockAcquired = false;
-        $shouldStart  = false;
-
-        $lockFd = fopen($lockFile, 'c');
-        if ($lockFd !== false) {
-            if (flock($lockFd, LOCK_EX | LOCK_NB)) {
-                $lockAcquired = true;
-                fwrite($lockFd, (string)getmypid());
-                fflush($lockFd);
-                $shouldStart = true;
-            } else {
-                if ($verbose) {
-                    echo "xray [{$inst_uuid}]: start already in progress (lock held), skipping\n";
-                }
-                fclose($lockFd);
-                $lockFd = false;
-            }
-        }
-
-        if ($shouldStart) {
-            try {
-                $alreadyRunning = false;
-                if (file_exists($xrayPid)) {
-                    $pid = (int)trim(file_get_contents($xrayPid));
-                    exec('/bin/kill -0 ' . $pid . ' 2>/dev/null', $out, $rc);
-                    $alreadyRunning = ($rc === 0);
-                }
-
-                if (!$alreadyRunning) {
-                    if ($verbose) {
-                        echo "xray [{$inst_uuid}]: starting xray-core and tun2socks...\n";
-                    }
-
-                    // Как proc_start() в xray-service-control.php: лог инстанса
-                    // держит daemon(8) (-o), по SIGHUP после ротации открывает
-                    // его заново (-H), pidfile супервизора (-P) нужен для этого SIGHUP.
-                    $log = escapeshellarg("/var/log/xray-core-{$inst_uuid}.log");
-                    exec('/usr/sbin/daemon -H -o ' . $log
-                        . ' -P ' . escapeshellarg('/var/run/xray-daemon-' . basename($xrayPid))
-                        . ' -p ' . escapeshellarg($xrayPid)
-                        . ' ' . escapeshellarg($xrayBin)
-                        . ' run -c ' . escapeshellarg($xrayConf)
-                        . ' > /dev/null 2>&1 &');
-
-                    sleep(1);
-
-                    exec('/usr/sbin/daemon -H -o ' . $log
-                        . ' -P ' . escapeshellarg('/var/run/xray-daemon-' . basename($t2sPid))
-                        . ' -p ' . escapeshellarg($t2sPid)
-                        . ' ' . escapeshellarg($t2sBin)
-                        . ' --config ' . escapeshellarg($t2sConf)
-                        . ' > /dev/null 2>&1 &');
-
-                    // Ждём TUN до 5 секунд
-                    $rc = 1;
-                    for ($i = 0; $i < 5; $i++) {
-                        exec('/sbin/ifconfig ' . escapeshellarg($tunIface) . ' 2>/dev/null', $o, $rc);
-                        if ($rc === 0) {
-                            break;
-                        }
-                        sleep(1);
-                    }
-
-                    if ($verbose) {
-                        echo "xray [{$inst_uuid}]: TUN {$tunIface} " . ($rc === 0 ? "up" : "not found after 5s") . "\n";
-                    }
-                }
-            } finally {
-                // BUG-1 FIX: lock освобождается гарантированно
-                if ($lockFd !== false) {
-                    flock($lockFd, LOCK_UN);
-                    fclose($lockFd);
-                    @unlink($lockFile);
-                }
-            }
-        }
+    exec('/usr/local/bin/php ' . escapeshellarg($ctrl) . ' start 2>&1', $out, $rc);
+    if ($verbose) {
+        echo implode("\n", $out) . "\n";
+        echo "xray: boot setup " . ($rc === 0 ? 'complete' : 'failed') . "\n";
     }
 
     // reload firewall/routing — выполняется всегда

@@ -15,6 +15,7 @@ class IndexController extends \OPNsense\Base\IndexController
         $this->view->instanceForm = $this->getForm('instance');
         $this->view->groupForm    = $this->getForm('group');
         $this->view->serverForm   = $this->getForm('server');
+        $this->view->ruleForm     = $this->getForm('rule');
         $this->view->pick('OPNsense/Xray/general');
     }
 }

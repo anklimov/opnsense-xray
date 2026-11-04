@@ -18,9 +18,14 @@
 set -e
 set -u
 
-PLUGIN_VERSION="3.2.1"
+PLUGIN_VERSION="4.0.0"
 PLUGIN_DIR="$(dirname "$0")/plugin"
 VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
+
+# v4.0.0: минимальная версия xray-core. Нативный TUN inbound на FreeBSD со всеми
+# auto-фичами (autoSystemRoutingTable/autoOutboundsInterface/autoSystemDnsToGateway)
+# появился в v26.10; на более старых ядрах доступен только legacy-драйвер tun2socks.
+XRAY_MIN_MAJOR="26"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -41,6 +46,9 @@ if [ "${1:-}" = "uninstall" ]; then
     rm -f /var/run/xray_start_*.lock /var/run/xray_stopped_*.flag
     rm -f /usr/local/etc/xray-core/config-*.json
     rm -f /usr/local/tun2socks/config-*.yaml
+    # v4.0.0: geo data and web assets
+    rm -f /usr/local/etc/xray-core/geoip.dat /usr/local/etc/xray-core/geosite.dat
+    rm -rf /usr/local/opnsense/www/js/xray
     # v1.x legacy files
     rm -f /var/run/xray_core.pid /var/run/tun2socks.pid
     rm -f /var/run/xray_start.lock /var/run/xray_stopped.flag
@@ -434,6 +442,7 @@ BINARIES_OK=1
 
 XRAY_NEEDS_INSTALL=0
 XRAY_NEEDS_UPGRADE=0
+XRAY_MAJOR="0"
 
 if [ ! -f /usr/local/bin/xray-core ]; then
     warn "xray-core NOT found at /usr/local/bin/xray-core"
@@ -442,16 +451,14 @@ if [ ! -f /usr/local/bin/xray-core ]; then
 else
     XRAY_VER=$(/usr/local/bin/xray-core version 2>/dev/null | head -1 || echo 'unknown')
     echo "[OK]  xray-core: $XRAY_VER"
-    # P2.5: xray-core 1.x не поддерживает xhttp+Reality (Custom Config).
-    # Рекомендуем 24.x+ для полной совместимости со всеми протоколами.
-    case "$XRAY_VER" in
-        *" 1."*)
-            echo ""
-            warn "xray-core 1.x detected. Version 24.x+ is recommended."
-            warn "Custom Config (xhttp, splithttp+Reality) requires 24.x+."
-            XRAY_NEEDS_UPGRADE=1
-            ;;
-    esac
+    # v4.0.0: нативный TUN inbound (FreeBSD) требует 26.10+
+    XRAY_MAJOR=$(echo "$XRAY_VER" | sed -n 's/^Xray \([0-9]\+\)\..*$/\1/p')
+    [ -z "$XRAY_MAJOR" ] && XRAY_MAJOR=0
+    if [ "$XRAY_MAJOR" -lt "$XRAY_MIN_MAJOR" ]; then
+        warn "xray-core < ${XRAY_MIN_MAJOR}.x detected: native TUN inbound unavailable."
+        warn "Upgrade to ${XRAY_MIN_MAJOR}.10+ to use the native TUN driver."
+        XRAY_NEEDS_UPGRADE=1
+    fi
 fi
 
 # Предложить установку или обновление xray-core
@@ -502,15 +509,11 @@ if [ "$XRAY_NEEDS_INSTALL" = "1" ] || [ "$XRAY_NEEDS_UPGRADE" = "1" ]; then
     esac
 fi
 
+# v4.0.0: tun2socks больше не обязателен — нужен только для legacy-драйвера
 if [ ! -f /usr/local/tun2socks/tun2socks ]; then
-    warn "tun2socks NOT found at /usr/local/tun2socks/tun2socks"
-    echo "       Download: https://github.com/xjasonlyu/tun2socks/releases"
-    echo "       fetch -o /tmp/t2s.zip <URL-for-tun2socks-freebsd-amd64.zip>"
-    echo "       cd /tmp && unzip t2s.zip && mkdir -p /usr/local/tun2socks"
-    echo "       install -m 0755 tun2socks-freebsd-amd64 /usr/local/tun2socks/tun2socks"
-    BINARIES_OK=0
+    echo "[INFO] tun2socks not found (optional since v4.0.0 — only for the legacy TUN driver)"
 else
-    echo "[OK]  tun2socks found"
+    echo "[OK]  tun2socks found (legacy driver available)"
 fi
 
 if [ "$BINARIES_OK" = "0" ]; then
@@ -614,11 +617,43 @@ install_tree "$PLUGIN_DIR/etc/newsyslog.conf.d" \
 install -d -m 0750 /usr/local/etc/xray-core
 install -d -m 0750 /usr/local/tun2socks
 
+# v4.0.0: web-ассеты (CodeMirror для редактора Raw JSON)
+install -d /usr/local/opnsense/www/js
+if [ -d "$PLUGIN_DIR/web/js/xray" ]; then
+    install_tree "$PLUGIN_DIR/web/js/xray" \
+                 "/usr/local/opnsense/www/js/xray" 0644
+fi
+
 # Write version file
 echo "$PLUGIN_VERSION" > "$VERSION_FILE"
 chmod 0644 "$VERSION_FILE"
 
 echo "[OK]  Plugin files installed."
+
+# ── Шаг 3.5: GeoIP/GeoSite данные ────────────────────────────────────────────
+echo ""
+echo "==> Step 3.5: GeoIP/GeoSite data files (routing rules)..."
+
+GEODIR="/usr/local/etc/xray-core"
+install -d -m 0750 "$GEODIR"
+
+for _GEODAT in geoip geosite; do
+    if [ -f "$GEODIR/${_GEODAT}.dat" ]; then
+        echo "[OK]  ${_GEODAT}.dat already present ($(wc -c < "$GEODIR/${_GEODAT}.dat") bytes)"
+        continue
+    fi
+    echo "  Downloading ${_GEODAT}.dat..."
+    if fetch -o "$GEODIR/${_GEODAT}.dat.tmp" "https://github.com/XTLS/Xray-core/releases/latest/download/${_GEODAT}.dat" 2>/dev/null \
+       && [ -s "$GEODIR/${_GEODAT}.dat.tmp" ]; then
+        mv "$GEODIR/${_GEODAT}.dat.tmp" "$GEODIR/${_GEODAT}.dat"
+        chmod 0640 "$GEODIR/${_GEODAT}.dat"
+        echo "[OK]  ${_GEODAT}.dat installed ($(wc -c < "$GEODIR/${_GEODAT}.dat") bytes)"
+    else
+        rm -f "$GEODIR/${_GEODAT}.dat.tmp"
+        warn "${_GEODAT}.dat download failed — geoip/geosite routing rules will not work."
+        warn "Download manually: https://github.com/XTLS/Xray-core/releases/latest/download/${_GEODAT}.dat → $GEODIR/"
+    fi
+done
 
 # ── Шаг 4: Импорт существующего конфига ──────────────────────────────────────
 # Импорт нужен только при ПЕРВОЙ установке — когда в config.xml ещё нет секции xray,
@@ -812,6 +847,127 @@ done
 # Удаляем stale flags от некорректных UUID (e.g. xray_stopped_1.flag от configd %1)
 rm -f /var/run/xray_stopped_1.flag 2>/dev/null
 echo "[OK]  Old runtime files cleaned."
+
+# ── Шаг 4.8: Миграция v3.x → v4.0.0 ──────────────────────────────────────────
+echo ""
+echo "==> Step 4.8: Migrating instances to v4.0.0 (TUN drivers, defaults, routing rules)..."
+
+_MIG4_OK=$(php << 'PHPEOF'
+<?php
+set_include_path('/usr/local/etc/inc' . PATH_SEPARATOR . get_include_path());
+require_once('config.inc');
+
+$cfg = OPNsense\Core\Config::getInstance();
+$obj = $cfg->object();
+$x   = $obj->OPNsense->xray ?? null;
+if (!$x) { echo "SKIP"; exit(0); }
+
+$instances = $x->instances ?? null;
+if (!$instances) { echo "SKIP"; exit(0); }
+
+if (!isset($x->routing_rules)) {
+    $x->addChild('routing_rules');
+}
+$rr = $x->routing_rules;
+
+function mig4_uuid()
+{
+    return sprintf(
+        '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0x0fff) | 0x4000,
+        mt_rand(0, 0x3fff) | 0x8000,
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+    );
+}
+
+function mig4_set($inst, $field, $value)
+{
+    if (isset($inst->$field)) {
+        if ((string)$inst->$field === '') {
+            $inst->$field = $value;
+            return true;
+        }
+        return false;
+    }
+    $inst->addChild($field, $value);
+    return true;
+}
+
+$changed = false;
+
+foreach ($instances->instance as $inst) {
+    $uuid = (string)$inst['uuid'];
+    if ($uuid === '') {
+        continue;
+    }
+
+    // 1. node_source: пусто (наследие v3.1.0) → group|config
+    if (!isset($inst->node_source) || (string)$inst->node_source === '') {
+        $mode = ((string)($inst->server ?? '') !== '') ? 'group' : 'config';
+        $changed = mig4_set($inst, 'node_source', $mode) || $changed;
+    }
+
+    // 2. tun_driver: отсутствует → tun2socks (сохраняем текущее поведение
+    //    обновляемых инстансов: их имена интерфейсов не подходят для xray-драйвера;
+    //    переключение на нативный TUN — осознанное действие в GUI)
+    $changed = mig4_set($inst, 'tun_driver', 'tun2socks') || $changed;
+
+    // 3. Дефолты новых полей v4.0.0
+    foreach ([
+        'socks5_enabled'       => '1',
+        'tun_gateway'          => '10.255.0.1/30',
+        'tun_auto_routing'     => 'off',
+        'tun_auto_dns'         => '0',
+        'dns_mode'             => 'off',
+        'lb_strategy'          => 'leastPing',
+        'srv_default_outbound' => 'direct',
+    ] as $field => $value) {
+        if (!isset($inst->$field)) {
+            $inst->addChild($field, $value);
+            $changed = true;
+        }
+    }
+
+    // 4. bypass_networks → правило RoutingRule (ip/direct), однократно
+    $bypass  = trim((string)($inst->bypass_networks ?? ''));
+    $hasRule = false;
+    foreach ($rr->rule as $r) {
+        if ((string)($r->instance ?? '') === $uuid) {
+            $hasRule = true;
+            break;
+        }
+    }
+    if (!$hasRule && $bypass !== '') {
+        $rule = $rr->addChild('rule');
+        $rule->addAttribute('uuid', mig4_uuid());
+        $rule->addChild('enabled', '1');
+        $rule->addChild('instance', $uuid);
+        $rule->addChild('name', 'bypass networks (migrated)');
+        $rule->addChild('type', 'ip');
+        $rule->addChild('value', htmlspecialchars($bypass, ENT_XML1 | ENT_QUOTES, 'UTF-8'));
+        $rule->addChild('action', 'direct');
+        $changed = true;
+    }
+}
+
+if ($changed) {
+    $cfg->save();
+    echo "OK";
+} else {
+    echo "SKIP";
+}
+PHPEOF
+) || true
+
+if [ "$_MIG4_OK" = "OK" ]; then
+    echo "[OK]  Instances migrated to v4.0.0 format (legacy TUN driver preserved)."
+elif [ "$_MIG4_OK" = "SKIP" ]; then
+    echo "[SKIP] Migration not needed."
+else
+    warn "v4.0.0 migration failed: $_MIG4_OK"
+fi
 
 # ── Шаг 5: Перезапуск configd ─────────────────────────────────────────────────
 echo ""

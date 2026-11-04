@@ -14,12 +14,15 @@
         function statusBadge(info) {
             if (!info) return '<span class="label label-default" style="font-size:11px;">--</span>';
             var xOk = info.xray_core === 'running';
-            var tOk = info.tun2socks === 'running';
+            // v4.0.0: xray-драйвер отдаёт 'tun' (интерфейс), legacy — tun2socks
+            var tVal = info.tun || info.tun2socks;
+            var tOk = tVal === 'running';
+            var tName = info.driver === 'xray' ? 'tun' : (info.driver === 'tun2socks' ? 'tun2socks' : (info.tun ? 'tun' : 'tun2socks'));
             return '<span class="label ' + (xOk ? 'label-success' : 'label-danger') + '" style="font-size:11px;">' +
                 'xray: ' + (xOk ? 'up' : 'down') +
                 '</span> ' +
                 '<span class="label ' + (tOk ? 'label-success' : 'label-danger') + '" style="font-size:11px;">' +
-                'tun: ' + (tOk ? 'up' : 'down') +
+                tName + ': ' + (tOk ? 'up' : 'down') +
                 '</span>';
         }
 
@@ -54,8 +57,17 @@
             toggle: '/api/xray/instance/toggleItem/',
             options: {
                 formatters: {
+                    modeLabel: function (column, row) {
+                        var labels = {
+                            config: 'config',
+                            group:  'group',
+                            none:   'server',
+                            raw:    'raw'
+                        };
+                        var v = labels[row.node_source] || 'config';
+                        return '<span class="label label-default" style="font-size:11px;">' + escAttr(v) + '</span>';
+                    },
                     instanceStatus: function (column, row) {
-                        // TODO: show "disabled" label instead of status badges when row.enabled === '0'
                         return '<span class="xray-status-cell" data-uuid="' + escAttr(row.uuid) + '">' +
                             statusBadge(instanceStatusCache[row.uuid]) + '</span>';
                     },
@@ -64,7 +76,6 @@
                             + testResultBadge(instanceTestCache[row.uuid]) + '</span>';
                     },
                     commands: function (column, row) {
-                        // TODO: disable/hide cmd-inst-start and cmd-inst-stop when row.enabled === '0'
                         var uuid = escAttr(row.uuid);
                         return '<button type="button" class="btn btn-xs btn-success cmd-inst-start bootgrid-tooltip"'
                              +   ' data-row-id="' + uuid + '" title="{{ lang._("Start this instance") }}">'
@@ -143,6 +154,29 @@
             }
         });
 
+        // ── Routing rules CRUD table (UIBootgrid) ────────────────────
+        $('#grid-rules').UIBootgrid({
+            search: '/api/xray/rule/searchItem',
+            get:    '/api/xray/rule/getItem/',
+            set:    '/api/xray/rule/setItem/',
+            add:    '/api/xray/rule/addItem',
+            del:    '/api/xray/rule/delItem/',
+            toggle: '/api/xray/rule/toggleItem/',
+            options: {
+                requestHandler: function (request) {
+                    request['instance'] = $('#ruleInstanceFilter').val() || '';
+                    return request;
+                },
+                formatters: {
+                    ruleAction: function (column, row) {
+                        var cls = { proxy: 'label-primary', balancer: 'label-info', direct: 'label-success', block: 'label-danger' };
+                        return '<span class="label ' + (cls[row.action] || 'label-default') + '" style="font-size:11px;">'
+                            + escAttr(row.action) + '</span>';
+                    }
+                }
+            }
+        });
+
         // Group filter above the servers grid
         $('#serverGroupFilter').on('change', function () {
             $('#grid-servers').bootgrid('reload');
@@ -163,6 +197,26 @@
                     }
                 });
         });
+
+        // Instance filter above the routing rules grid
+        $('#ruleInstanceFilter').on('change', function () {
+            $('#grid-rules').bootgrid('reload');
+        });
+
+        function populateRuleInstanceFilter() {
+            $.ajax({url: '/api/xray/instance/searchItem', type: 'GET', dataType: 'json'})
+                .done(function (data) {
+                    var $sel = $('#ruleInstanceFilter');
+                    var current = $sel.val();
+                    $sel.empty().append($('<option>').val('').text("{{ lang._('All instances') }}"));
+                    (data.rows || []).forEach(function (row) {
+                        $sel.append($('<option>').val(row.uuid).text(row.name || row.uuid));
+                    });
+                    if (current) {
+                        $sel.val(current);
+                    }
+                });
+        }
 
         // ── Subscription import ─────────────────────────────────────
         $('#btnSubImport').on('click', function () {
@@ -259,6 +313,7 @@
         $('#grid-instances').on('loaded.rs.jquery.bootgrid', function () {
             refreshInstancesStatus();
             populateInstanceSelects();
+            populateRuleInstanceFilter();
         });
 
         // Per-instance start / stop / test (row button handlers)
@@ -317,7 +372,7 @@
                 var anyXray = false, anyTun = false;
                 $.each(data, function (uuid, info) {
                     if (info.xray_core === 'running') anyXray = true;
-                    if (info.tun2socks === 'running') anyTun = true;
+                    if ((info.tun || info.tun2socks) === 'running') anyTun = true;
                 });
                 var xok = anyXray, tok = anyTun;
                 $('#badge_xray')
@@ -327,7 +382,7 @@
                 $('#badge_tun')
                     .removeClass('label-success label-danger label-default')
                     .addClass(tok ? 'label-success' : 'label-danger')
-                    .text('tun2socks: ' + (tok ? 'running' : 'stopped'));
+                    .text('tun: ' + (tok ? 'running' : 'stopped'));
 
                 // Update per-instance status in grid
                 applyStatusToGrid();
@@ -346,7 +401,6 @@
             if (confirmMsg && !confirm(confirmMsg)) {
                 return;
             }
-            // TODO: clean up — pass $btn as argument instead of deriving it from action string
             var $btns = $('#btnStartAll, #btnStopAll, #btnRestartAll').prop('disabled', true);
             var $btn = action === 'start'   ? $('#btnStartAll')
                      : action === 'stop'    ? $('#btnStopAll')
@@ -395,7 +449,6 @@
 
             var uuids = [];
             $.each(instanceStatusCache, function (uuid, info) {
-                // TODO: check on enabled status
                 if (info.xray_core === 'running') { uuids.push(uuid); }
             });
 
@@ -437,7 +490,7 @@
             $dlg.find('[id="instance.outbound_config"]').val(data.outbound_config || '');
         }
 
-        // Inject Import panel + Validate button into DialogInstance on first open
+        // Inject Import panel + footer buttons into DialogInstance on first open
         var dialogInjected = false;
         $('#DialogInstance').on('show.bs.modal', function () {
             if (dialogInjected) {
@@ -446,6 +499,7 @@
                 $('#dlgImportResult').text('').removeClass('text-success text-danger');
                 $('#dlgImportPanel').collapse('hide');
                 $('#dlgValidateResult').text('').removeClass('text-success text-danger');
+                $('#dlgPreviewResult').text('').removeClass('text-success text-danger');
                 return;
             }
             dialogInjected = true;
@@ -475,19 +529,78 @@
             var $body = $(this).find('.modal-body');
             $body.prepend(importHtml);
 
-            // Validate button — in footer, before Save
+            // Helper buttons near server inbound fields (v4.0.0)
+            var $usersTa = $body.find('[id="instance.srv_users"]');
+            $usersTa.closest('td').append(
+                '<div style="margin-top: 6px;">' +
+                    '<button type="button" id="dlgAddUserBtn" class="btn btn-sm btn-default">' +
+                        '<i class="fa fa-user-plus"></i> {{ lang._("Add user (generate UUID)") }}' +
+                    '</button> ' +
+                    '<button type="button" id="dlgNginxSnippetBtn" class="btn btn-sm btn-default">' +
+                        '<i class="fa fa-code"></i> {{ lang._("nginx snippet") }}' +
+                    '</button>' +
+                '</div>'
+            );
+
+            // Footer buttons (v4.0.0): Validate Config + Format (raw mode),
+            // Preview Generated Config (wizard mode)
             var validateHtml =
                 '<button type="button" id="dlgValidateBtn" class="btn btn-info pull-left">' +
                     '<i class="fa fa-check-circle"></i> {{ lang._("Validate Config") }}' +
                 '</button>' +
-                '<span id="dlgValidateResult" class="pull-left" style="font-size: 12px; line-height: 34px; margin-left: 8px;"></span>';
+                '<button type="button" id="dlgFormatBtn" class="btn btn-default pull-left" style="margin-left: 4px;">' +
+                    '{{ lang._("Format") }}' +
+                '</button>' +
+                '<button type="button" id="dlgPreviewBtn" class="btn btn-default pull-left" style="margin-left: 4px;">' +
+                    '<i class="fa fa-eye"></i> {{ lang._("Preview Generated Config") }}' +
+                '</button>' +
+                '<span id="dlgValidateResult" class="pull-left" style="font-size: 12px; line-height: 34px; margin-left: 8px;"></span>' +
+                '<span id="dlgPreviewResult" class="pull-left" style="font-size: 12px; line-height: 34px; margin-left: 8px;"></span>';
             var $footer = $(this).find('.modal-footer');
             $footer.prepend(validateHtml);
         });
 
-        // ── Node source: показываем ровно один способ задать узел ───
-        // 'Xray config (JSON)' -> поле outbound_config + панель Import VLESS link
-        // 'Server group'       -> поля Server Group / Server
+        // ── v4.0.0: CodeMirror editor for the raw config ─────────────
+        var rawCm = null;
+
+        function initRawEditor() {
+            if (rawCm !== null || !window.CodeMirror) {
+                return;
+            }
+            var $ta = $('#DialogInstance').find('[id="instance.full_config"]');
+            if (!$ta.length || $ta.prop('tagName') !== 'TEXTAREA') {
+                return;
+            }
+            rawCm = window.CodeMirror.fromTextArea($ta.get(0), {
+                mode: 'application/json',
+                lineNumbers: true,
+                indentUnit: 4,
+                lineWrapping: true,
+                matchBrackets: true,
+                viewportMargin: Infinity
+            });
+            rawCm.on('change', function () { rawCm.save(); });
+            rawCm.setSize(null, 420);
+        }
+
+        function rawEditorValue() {
+            if (rawCm !== null) {
+                rawCm.save();
+                return rawCm.getValue();
+            }
+            return $('#DialogInstance').find('[id="instance.full_config"]').val() || '';
+        }
+
+        function setRawEditorValue(v) {
+            if (rawCm !== null) {
+                rawCm.setValue(v);
+                rawCm.save();
+            } else {
+                $('#DialogInstance').find('[id="instance.full_config"]').val(v);
+            }
+        }
+
+        // ── v4.0.0: Config Source / sections sync ─────────────────────
         // Селекторы через [id="…"]: у полей модели точка в id, и $('#instance.group')
         // jQuery читает как id="instance" + класс "group".
         var xrayServerGroup = {};   // server uuid -> group uuid
@@ -504,47 +617,109 @@
                 .fail(function () { if (then) then(); });
         }
 
-        function xraySyncNodeSource() {
+        function xraySyncDialog() {
             var $mode = $('[id="instance.node_source"]');
             if (!$mode.length) return;
-            var useGroup = $mode.val() === 'group';
+            var mode = $mode.val() || 'config';
 
-            $('[id="instance.outbound_config"]').closest('tr').toggle(!useGroup);
-            $('#dlgImportWrap').toggle(!useGroup);
-            $('[id="instance.group"]').closest('tr').toggle(useGroup);
-            $('[id="instance.server"]').closest('tr').toggle(useGroup);
+            // 1. Источник узла
+            $('[id="instance.outbound_config"]').closest('tr').toggle(mode === 'config');
+            $('#dlgImportWrap').toggle(mode === 'config');
+            $('[id="instance.group"]').closest('tr').toggle(mode === 'group');
+            $('[id="instance.server"]').closest('tr').toggle(mode === 'group');
+            $('[id="instance.full_config"]').closest('tr').toggle(mode === 'raw');
+            if (rawCm !== null) {
+                $(rawCm.getWrapperElement()).toggle(mode === 'raw');
+                if (mode === 'raw') rawCm.refresh();
+            }
 
-            if (!useGroup) return;
+            // 2. Footer buttons: raw → Validate/Format, иначе → Preview
+            $('#dlgValidateBtn').toggle(mode === 'raw');
+            $('#dlgFormatBtn').toggle(mode === 'raw');
+            $('#dlgPreviewBtn').toggle(mode !== 'raw');
 
-            // Список Server ограничиваем выбранной группой, но выбранный сейчас
-            // узел показываем всегда: иначе открытие диалога молча снимало бы
-            // выбор (узел вне группы, группа удалена, или карта не загрузилась),
-            // и следующий Save записал бы пустой server, вернув инстанс на JSON.
-            var gid = $('[id="instance.group"]').val() || '';
-            var $srv = $('[id="instance.server"]');
-            var current = $srv.val();
-            var mapped = !$.isEmptyObject(xrayServerGroup);
-            $srv.find('option').each(function () {
-                var v = $(this).val();
-                var mine = (v === '' || v === current || gid === '' || !mapped
-                            || xrayServerGroup[v] === gid);
-                $(this).prop('disabled', !mine).toggle(mine);
+            // 3. Список Server ограничиваем выбранной группой (режим group)
+            if (mode === 'group') {
+                var gid = $('[id="instance.group"]').val() || '';
+                var $srv = $('[id="instance.server"]');
+                var current = $srv.val();
+                var mapped = !$.isEmptyObject(xrayServerGroup);
+                $srv.find('option').each(function () {
+                    var v = $(this).val();
+                    var mine = (v === '' || v === current || gid === '' || !mapped
+                                || xrayServerGroup[v] === gid);
+                    $(this).prop('disabled', !mine).toggle(mine);
+                });
+                if (current && gid && mapped && xrayServerGroup[current] !== undefined
+                    && xrayServerGroup[current] !== gid) {
+                    $srv.val('');
+                }
+                if ($srv.hasClass('selectpicker')) {
+                    $srv.selectpicker('refresh');
+                }
+            }
+
+            // 4. TUN-драйвер: gateway/auto-routing/auto-dns — только для xray
+            var driver = $('[id="instance.tun_driver"]').val() || 'xray';
+            var full = $('[id="instance.tun_auto_routing"]').val() === 'full';
+            $('[id="instance.tun_gateway"]').closest('tr').toggle(driver === 'xray');
+            $('[id="instance.tun_auto_routing"]').closest('tr').toggle(driver === 'xray');
+            $('[id="instance.tun_auto_dns"]').closest('tr').toggle(driver === 'xray' && full);
+
+            // 5. DNS upstream — только в hijack
+            $('[id="instance.dns_upstream"]').closest('tr')
+                .toggle($('[id="instance.dns_mode"]').val() === 'hijack');
+
+            // 6. LB: custom list — только когда LB включён и режим config
+            var lbOn = $('[id="instance.lb_enabled"]').is(':checked');
+            $('[id="instance.lb_strategy"]').closest('tr').toggle(lbOn);
+            $('[id="instance.lb_probe_url"]').closest('tr').toggle(lbOn);
+            $('[id="instance.lb_probe_interval"]').closest('tr').toggle(lbOn);
+            $('[id="instance.lb_custom"]').closest('tr').toggle(lbOn && mode === 'config');
+
+            // 7. Server inbound: поля — только когда включён
+            var srvOn = $('[id="instance.srv_enabled"]').is(':checked');
+            var srvTransport = $('[id="instance.srv_transport"]').val() || 'ws';
+            var srvSecurity = $('[id="instance.srv_security"]').val() || 'none';
+            var srvFields = ['srv_listen', 'srv_port', 'srv_users', 'srv_transport', 'srv_path',
+                             'srv_security', 'srv_accept_proxy_protocol', 'srv_custom_inbounds',
+                             'srv_default_outbound'];
+            $.each(srvFields, function (_, f) {
+                $('[id="instance.' + f + '"]').closest('tr').toggle(srvOn);
             });
-            // Снимаем выбор только когда точно знаем, что узел из другой группы.
-            if (current && gid && mapped && xrayServerGroup[current] !== undefined
-                && xrayServerGroup[current] !== gid) {
-                $srv.val('');
-            }
-            if ($srv.hasClass('selectpicker')) {
-                $srv.selectpicker('refresh');
-            }
+            $('#dlgAddUserBtn').toggle(srvOn);
+            $('#dlgNginxSnippetBtn').toggle(srvOn);
+            $('[id="instance.srv_tls_cert"]').closest('tr').toggle(srvOn && srvSecurity === 'tls');
+            $('[id="instance.srv_tls_key"]').closest('tr').toggle(srvOn && srvSecurity === 'tls');
+            $('[id="instance.srv_reality_privatekey"]').closest('tr').toggle(srvOn && srvSecurity === 'reality');
+            $('[id="instance.srv_reality_shortids"]').closest('tr').toggle(srvOn && srvSecurity === 'reality');
+            $('[id="instance.srv_reality_servernames"]').closest('tr').toggle(srvOn && srvSecurity === 'reality');
+            $('[id="instance.srv_reality_dest"]').closest('tr').toggle(srvOn && srvSecurity === 'reality');
+            // path не нужен для tcp
+            $('[id="instance.srv_path"]').closest('tr').toggle(srvOn && srvTransport !== 'tcp');
         }
 
         $('#DialogInstance').on('shown.bs.modal', function () {
             // значения полей приезжают асинхронно через get, поэтому с задержкой
-            xrayLoadServerGroups(function () { setTimeout(xraySyncNodeSource, 300); });
+            xrayLoadServerGroups(function () {
+                setTimeout(function () {
+                    initRawEditor();
+                    if (rawCm !== null) {
+                        var saved = $('#DialogInstance').find('[id="instance.full_config"]').val() || '';
+                        var cur = rawCm.getValue();
+                        if (saved !== cur) {
+                            setRawEditorValue(saved);
+                        }
+                    }
+                    xraySyncDialog();
+                }, 300);
+            });
         });
-        $(document).on('change', '[id="instance.node_source"], [id="instance.group"]', xraySyncNodeSource);
+        $(document).on('change', '[id="instance.node_source"], [id="instance.group"], ' +
+            '[id="instance.tun_driver"], [id="instance.tun_auto_routing"], [id="instance.dns_mode"], ' +
+            '[id="instance.lb_enabled"], [id="instance.srv_enabled"], [id="instance.srv_transport"], ' +
+            '[id="instance.srv_security"]', xraySyncDialog);
+        $(document).on('ifChanged', '[id="instance.lb_enabled"], [id="instance.srv_enabled"]', xraySyncDialog);
 
         // Import parse handler (inside dialog)
         $(document).on('click', '#dlgImportParseBtn', function () {
@@ -595,15 +770,25 @@
             }
         });
 
-        // ── Validate Config (inside DialogInstance footer) ────────
+        // ── Validate Config draft (raw mode) ─────────────────────────
         $(document).on('click', '#dlgValidateBtn', function () {
             var $btn = $(this).prop('disabled', true);
             var $res = $('#dlgValidateResult');
+            var draft = rawEditorValue();
+
+            if ($.trim(draft) === '') {
+                $btn.prop('disabled', false);
+                $res.removeClass('text-success').addClass('text-danger')
+                    .text("{{ lang._('Config is empty.') }}");
+                return;
+            }
             $res.removeClass('text-success text-danger').text("{{ lang._('Validating...') }}");
 
             $.ajax({
-                url:      '/api/xray/service/validate',
+                url:      '/api/xray/service/validateConfig',
                 type:     'POST',
+                contentType: 'application/json; charset=utf-8',
+                data:     JSON.stringify({config: draft}),
                 dataType: 'json',
                 success: function (data) {
                     $btn.prop('disabled', false);
@@ -620,6 +805,164 @@
                     $res.addClass('text-danger').text("{{ lang._('HTTP error:') }} " + xhr.status);
                 }
             });
+        });
+
+        // ── Format raw JSON ────────────────────────────────────────────
+        $(document).on('click', '#dlgFormatBtn', function () {
+            var $res = $('#dlgValidateResult');
+            try {
+                var parsed = JSON.parse(rawEditorValue());
+                setRawEditorValue(JSON.stringify(parsed, null, 4));
+                $res.removeClass('text-danger').addClass('text-success')
+                    .text("{{ lang._('Formatted.') }}");
+            } catch (e) {
+                $res.removeClass('text-success').addClass('text-danger')
+                    .text("{{ lang._('Cannot format:') }} " + e.message);
+            }
+        });
+
+        // ── Preview generated config (wizard mode) ────────────────────
+        // UUID редактируемой записи: UIBootgrid не кладёт его на диалог,
+        // поэтому перехватываем клик по кнопке редактирования в строке.
+        var xrayEditingUuid = null;
+        $(document).on('click', '#grid-instances .command-edit', function () {
+            xrayEditingUuid = $(this).data('row-id') || null;
+        });
+        $(document).on('click', '#grid-instances [data-action="add"]', function () {
+            xrayEditingUuid = null;
+        });
+
+        $(document).on('click', '#dlgPreviewBtn', function () {
+            var $btn = $(this).prop('disabled', true);
+            var $res = $('#dlgPreviewResult');
+            var uuid = xrayEditingUuid;
+
+            if (!uuid) {
+                $btn.prop('disabled', false);
+                $res.removeClass('text-success').addClass('text-danger')
+                    .text("{{ lang._('Save the instance first.') }}");
+                return;
+            }
+            $res.removeClass('text-success text-danger').text("{{ lang._('Building...') }}");
+
+            $.ajax({
+                url:  '/api/xray/service/previewConfig/' + encodeURIComponent(uuid),
+                type: 'POST',
+                dataType: 'json',
+                success: function (data) {
+                    $btn.prop('disabled', false);
+                    if (data.result !== 'ok') {
+                        $res.removeClass('text-success').addClass('text-danger')
+                            .text(data.message || 'build failed');
+                        return;
+                    }
+                    $res.removeClass('text-danger').addClass('text-success')
+                        .text("{{ lang._('OK') }}");
+                    $('#configPreviewPre').text(data.config || '');
+                    $('#ConfigPreviewModal').modal('show');
+                },
+                error: function (xhr) {
+                    $btn.prop('disabled', false);
+                    $res.removeClass('text-success').addClass('text-danger')
+                        .text("{{ lang._('HTTP error:') }} " + xhr.status);
+                }
+            });
+        });
+
+        // ── Add user (generate UUID into srv_users) ───────────────────
+        $(document).on('click', '#dlgAddUserBtn', function () {
+            var $ta = $('#DialogInstance').find('[id="instance.srv_users"]');
+            var list = [];
+            var raw = $.trim($ta.val() || '');
+            if (raw !== '') {
+                try {
+                    list = JSON.parse(raw);
+                } catch (e) {
+                    alert("{{ lang._('Users field is not valid JSON — fix it first.') }}");
+                    return;
+                }
+            }
+            if (!$.isArray(list)) {
+                alert("{{ lang._('Users field must be a JSON array.') }}");
+                return;
+            }
+            var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+                var r = Math.random() * 16 | 0;
+                var v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+            list.push({id: uuid, email: 'user' + (list.length + 1), flow: ''});
+            $ta.val(JSON.stringify(list, null, 4));
+        });
+
+        // ── nginx snippet ──────────────────────────────────────────────
+        function buildNginxSnippets() {
+            var listen = $('[id="instance.srv_listen"]').val() || '127.0.0.1';
+            var port   = $('[id="instance.srv_port"]').val() || '10086';
+            var path   = $('[id="instance.srv_path"]').val() || '/vless';
+            var target = listen + ':' + port;
+
+            var ws =
+                '# nginx http server block (reverse proxy for the VLESS WebSocket inbound)\n' +
+                'location ' + path + ' {\n' +
+                '    proxy_pass http://' + target + ';\n' +
+                '    proxy_http_version 1.1;\n' +
+                '    proxy_set_header Upgrade $http_upgrade;\n' +
+                '    proxy_set_header Connection "upgrade";\n' +
+                '    proxy_set_header Host $host;\n' +
+                '    proxy_set_header X-Real-IP $remote_addr;\n' +
+                '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n' +
+                '    proxy_read_timeout 300s;\n' +
+                '    proxy_send_timeout 300s;\n' +
+                '}\n' +
+                '# TLS terminates on nginx (configure certificates on the server {} level).\n' +
+                '# Other paths can serve a decoy site or return 404.';
+
+            var grpc =
+                '# nginx http server block (gRPC needs HTTP/2 on the listen socket)\n' +
+                'location / {\n' +
+                '    grpc_pass grpc://' + target + ';\n' +
+                '    grpc_read_timeout 300s;\n' +
+                '    grpc_send_timeout 300s;\n' +
+                '}\n' +
+                '# listen 443 ssl http2;  — required for gRPC.';
+
+            var stream =
+                '# nginx stream block (raw TCP / Reality pass-through)\n' +
+                'stream {\n' +
+                '    server {\n' +
+                '        listen 443;\n' +
+                '        proxy_pass ' + target + ';\n' +
+                '        # To keep the real client IP also enable in Xray:\n' +
+                '        # "Accept PROXY Protocol", then uncomment:\n' +
+                '        # proxy_protocol on;\n' +
+                '    }\n' +
+                '}\n' +
+                '# For Reality/xTLS use the stream module or expose Xray directly on WAN.';
+
+            $('#nginxSnippetWs').text(ws);
+            $('#nginxSnippetGrpc').text(grpc);
+            $('#nginxSnippetStream').text(stream);
+        }
+
+        $(document).on('click', '#dlgNginxSnippetBtn', function () {
+            buildNginxSnippets();
+            $('#nginxSnippetTabs a:first').tab('show');
+            $('#NginxSnippetModal').modal('show');
+        });
+
+        $(document).on('click', '#btnCopyNginxSnippet', function () {
+            var active = $('#nginxSnippetTabs .active a').attr('href');
+            var text = $(active + ' pre').text();
+            var $btn = $(this);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function () {
+                    $btn.text("{{ lang._('Copied!') }}");
+                    setTimeout(function () { $btn.text("{{ lang._('Copy active tab') }}"); }, 1500);
+                });
+            } else {
+                alert(text);
+            }
         });
 
         // ── Diagnostics ─────────────────────────────────────────────
@@ -678,6 +1021,31 @@
                 $('#diag_xray_uptime').text(data.xray_uptime || '\u2014');
                 $('#diag_t2s_uptime').text(data.tun2socks_uptime || '\u2014');
                 $('#diag_ping_rtt').text(data.ping_rtt || 'N/A');
+
+                // v4.0.0: environment
+                $('#diag_tun_driver').text(data.tun_driver || '\u2014');
+                $('#diag_t2s_row').toggle(data.tun_driver !== 'xray');
+                $('#diag_xray_version').text(data.xray_version || '\u2014');
+                $('#diag_xray_ver_warn').toggle(data.xray_native_tun_ok !== 1);
+                var geo = '\u2014';
+                if (data.geoip_ok != null && data.geosite_ok != null) {
+                    geo = 'geoip.dat: ' + (data.geoip_ok ? '<span class="label label-success">ok</span>' : '<span class="label label-danger">missing</span>')
+                        + ' &nbsp; geosite.dat: ' + (data.geosite_ok ? '<span class="label label-success">ok</span>' : '<span class="label label-danger">missing</span>');
+                }
+                $('#diag_geodata').html(geo);
+                var fibs = (data.net_fibs != null) ? String(data.net_fibs) : '\u2014';
+                $('#diag_net_fibs').text(fibs);
+                $('#diag_fibs_warn').toggle(data.net_fibs != null && data.net_fibs < 2);
+
+                var ports = '\u2014';
+                if (data.listen_ports && data.listen_ports.length) {
+                    ports = data.listen_ports.map(function (p) {
+                        return p.port + ': ' + (p.listening
+                            ? '<span class="label label-success">listening</span>'
+                            : '<span class="label label-danger">no</span>');
+                    }).join(' &nbsp; ');
+                }
+                $('#diag_ports').html(ports);
             });
         }
 
