@@ -208,8 +208,15 @@ class ServiceController extends ApiMutableServiceControllerBase
             return ['result' => 'failed', 'message' => 'Invalid JSON: ' . json_last_error_msg()];
         }
 
-        $path = tempnam('/tmp', 'xray-val-');
-        if ($path === false) {
+        // v4.0.6: xray определяет формат конфига по РАСШИРЕНИЮ файла —
+        // безымянный tempnam давал «core: Failed to get format of /tmp/xray-val-*»
+        $tmp = tempnam('/tmp', 'xray-val-');
+        if ($tmp === false) {
+            return ['result' => 'failed', 'message' => 'Cannot create temp file'];
+        }
+        $path = $tmp . '.json';
+        if (!rename($tmp, $path)) {
+            @unlink($tmp);
             return ['result' => 'failed', 'message' => 'Cannot create temp file'];
         }
         file_put_contents($path, $draft);

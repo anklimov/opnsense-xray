@@ -18,7 +18,7 @@
 set -e
 set -u
 
-PLUGIN_VERSION="4.0.5"
+PLUGIN_VERSION="4.0.6"
 PLUGIN_DIR="$(dirname "$0")/plugin"
 VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
 

@@ -861,13 +861,39 @@
         $(document).on('click', '#grid-instances [data-action="add"]', function () {
             xrayEditingUuid = null;
         });
+        // v4.0.6: клик-перехват ненадёжен (dropdown-меню команд рендерится
+        // вне грида, открытие двойным кликом и т.п.). Надёжный источник —
+        // ajax bootgrid'а: при открытии редактирования ВСЕГДА запрашивается
+        // getItem/<uuid>, при сохранении нового — addItem.
+        $(document).ajaxPrefilter(function (options) {
+            var url = options.url || '';
+            var m = url.match(/\/api\/xray\/instance\/getItem\/([0-9a-fA-F-]{36})/);
+            if (m) {
+                xrayEditingUuid = m[1];
+            } else if (url.indexOf('/api/xray/instance/addItem') !== -1) {
+                xrayEditingUuid = null;
+            }
+        });
+        // v4.0.6: двойная страховка от "add" — bootgrid триггерит событие
+        // на диалоге; иконка заголовка переключается на fa-plus
+        $('#DialogInstance').on('opnsense_bootgrid_mapped', function (e, mode) {
+            if (mode === 'add') {
+                xrayEditingUuid = null;
+            }
+        });
+        function xrayDialogIsAddMode() {
+            var icon = $('#DialogInstance i.model-header-icon').attr('class') || '';
+            return icon.indexOf('fa-plus') !== -1;
+        }
 
         $(document).on('click', '#dlgPreviewBtn', function () {
             var $btn = $(this).prop('disabled', true);
             var $res = $('#dlgPreviewResult');
             var uuid = xrayEditingUuid;
 
-            if (!uuid) {
+            // v4.0.6: в режиме "add" тихое сохранение перезаписало бы ДРУГОЙ
+            // инстанс полями по умолчанию — поэтому жёсткий отказ
+            if (!uuid || xrayDialogIsAddMode()) {
                 $btn.prop('disabled', false);
                 $res.removeClass('text-success').addClass('text-danger')
                     .text("{{ lang._('Save the instance first.') }}");

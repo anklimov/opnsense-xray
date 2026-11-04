@@ -203,7 +203,12 @@ foreach (array_unique($portsToList) as $p) {
     exec('/usr/bin/sockstat -46l 2>/dev/null', $ssOut, $ssRc);
     $found = false;
     foreach ($ssOut as $line) {
-        if (preg_match('/[:.]' . $p . '\s*$/', trim($line))) {
+        // v4.0.6: sockstat выводит "... LOCAL FOREIGN" — слушающий порт стоит
+        // в LOCAL (например "192.168.88.6:10808"), а СТРОКА заканчивается
+        // foreign-адресом ("*:*"). Привязка к концу строки не матчила ничего.
+        // Порт с последующим пробелом ИЛИ концом строки; префикс [:.] отсекает
+        // PID и прочие числа (они отделены пробелами).
+        if (preg_match('/[:.]' . $p . '(?:\s|$)/', $line)) {
             $found = true;
             break;
         }
