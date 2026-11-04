@@ -984,8 +984,8 @@ install -m 0755 /tmp/xray /usr/local/bin/xray-core
 
 **geoip.dat / geosite.dat** — for GeoIP/GeoSite routing rules (normally installed by `install.sh`)
 ```sh
-fetch -o /usr/local/etc/xray-core/geoip.dat https://github.com/XTLS/Xray-core/releases/latest/download/geoip.dat
-fetch -o /usr/local/etc/xray-core/geosite.dat https://github.com/XTLS/Xray-core/releases/latest/download/geosite.dat
+fetch -o /usr/local/etc/xray-core/geoip.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+fetch -o /usr/local/etc/xray-core/geosite.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
 ```
 
 **tun2socks** (optional, legacy TUN driver only) — [github.com/xjasonlyu/tun2socks/releases](https://github.com/xjasonlyu/tun2socks/releases)

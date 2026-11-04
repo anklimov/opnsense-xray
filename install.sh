@@ -26,6 +26,11 @@ VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
 # auto-фичами (autoSystemRoutingTable/autoOutboundsInterface/autoSystemDnsToGateway)
 # появился в v26.10; на более старых ядрах доступен только legacy-драйвер tun2socks.
 XRAY_MIN_MAJOR="26"
+XRAY_MIN_MINOR="10"
+
+# v4.0.0: geoip.dat/geosite.dat больше не входят в релизы Xray-core
+# (проверено на v26.10.31) — берём из Loyalsoldier/v2ray-rules-dat.
+GEO_REPO="Loyalsoldier/v2ray-rules-dat"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -83,6 +88,18 @@ if [ "${1:-}" = "uninstall" ]; then
     echo "=============================="
     echo "Refresh browser with Ctrl+F5."
     exit 0
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SANITY: plugin sources present
+#
+# Без этого проверка молча пропускала шаг 3 (find по несуществующим каталогам
+# печатал ошибки, а установка рапортовала успех) — файлы плагина не ставились.
+# ─────────────────────────────────────────────────────────────────────────────
+if [ ! -d "$PLUGIN_DIR/scripts/Xray" ] || [ ! -d "$PLUGIN_DIR/mvc/app" ]; then
+    die "plugin sources not found under '$PLUGIN_DIR'
+       Run install.sh from the repository root (the directory containing plugin/).
+       Copy or clone the WHOLE repository, not just install.sh."
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -380,6 +397,11 @@ install_tree() {
     _dst="$2"
     _fmode="${3:-0644}"
 
+    if [ ! -d "$_src" ]; then
+        warn "install_tree: source directory not found: $_src"
+        return 1
+    fi
+
     find "$_src" -mindepth 1 -type d | while IFS= read -r _dir; do
         _rel="${_dir#$_src}"
         install -d "${_dst}${_rel}"
@@ -443,6 +465,7 @@ BINARIES_OK=1
 XRAY_NEEDS_INSTALL=0
 XRAY_NEEDS_UPGRADE=0
 XRAY_MAJOR="0"
+XRAY_MINOR="0"
 
 if [ ! -f /usr/local/bin/xray-core ]; then
     warn "xray-core NOT found at /usr/local/bin/xray-core"
@@ -451,12 +474,18 @@ if [ ! -f /usr/local/bin/xray-core ]; then
 else
     XRAY_VER=$(/usr/local/bin/xray-core version 2>/dev/null | head -1 || echo 'unknown')
     echo "[OK]  xray-core: $XRAY_VER"
-    # v4.0.0: нативный TUN inbound (FreeBSD) требует 26.10+
-    XRAY_MAJOR=$(echo "$XRAY_VER" | sed -n 's/^Xray \([0-9]\+\)\..*$/\1/p')
-    [ -z "$XRAY_MAJOR" ] && XRAY_MAJOR=0
-    if [ "$XRAY_MAJOR" -lt "$XRAY_MIN_MAJOR" ]; then
-        warn "xray-core < ${XRAY_MIN_MAJOR}.x detected: native TUN inbound unavailable."
-        warn "Upgrade to ${XRAY_MIN_MAJOR}.10+ to use the native TUN driver."
+    # v4.0.0: нативный TUN inbound (FreeBSD) требует 26.10+.
+    # BSD sed не понимает \+ в BRE (на FreeBSD версия не извлекалась) —
+    # парсим через awk/cut, это портабельно.
+    XRAY_VER_NUM=$(echo "$XRAY_VER" | awk '/^Xray /{print $2; exit}')
+    XRAY_MAJOR=$(echo "${XRAY_VER_NUM:-0}" | cut -d. -f1)
+    XRAY_MINOR=$(echo "${XRAY_VER_NUM:-0}" | cut -d. -f2)
+    case "$XRAY_MAJOR" in ''|*[!0-9]*) XRAY_MAJOR=0 ;; esac
+    case "$XRAY_MINOR" in ''|*[!0-9]*) XRAY_MINOR=0 ;; esac
+    if [ "$XRAY_MAJOR" -lt "$XRAY_MIN_MAJOR" ] || \
+       { [ "$XRAY_MAJOR" -eq "$XRAY_MIN_MAJOR" ] && [ "$XRAY_MINOR" -lt "$XRAY_MIN_MINOR" ]; }; then
+        warn "xray-core ${XRAY_VER_NUM:-unknown} is older than ${XRAY_MIN_MAJOR}.${XRAY_MIN_MINOR}: native TUN inbound unavailable."
+        warn "Upgrade to ${XRAY_MIN_MAJOR}.${XRAY_MIN_MINOR}+ to use the native TUN driver."
         XRAY_NEEDS_UPGRADE=1
     fi
 fi
@@ -636,6 +665,7 @@ echo "==> Step 3.5: GeoIP/GeoSite data files (routing rules)..."
 
 GEODIR="/usr/local/etc/xray-core"
 install -d -m 0750 "$GEODIR"
+GEO_BASE="https://github.com/${GEO_REPO}/releases/latest/download"
 
 for _GEODAT in geoip geosite; do
     if [ -f "$GEODIR/${_GEODAT}.dat" ]; then
@@ -643,7 +673,7 @@ for _GEODAT in geoip geosite; do
         continue
     fi
     echo "  Downloading ${_GEODAT}.dat..."
-    if fetch -o "$GEODIR/${_GEODAT}.dat.tmp" "https://github.com/XTLS/Xray-core/releases/latest/download/${_GEODAT}.dat" 2>/dev/null \
+    if fetch -o "$GEODIR/${_GEODAT}.dat.tmp" "${GEO_BASE}/${_GEODAT}.dat" 2>/dev/null \
        && [ -s "$GEODIR/${_GEODAT}.dat.tmp" ]; then
         mv "$GEODIR/${_GEODAT}.dat.tmp" "$GEODIR/${_GEODAT}.dat"
         chmod 0640 "$GEODIR/${_GEODAT}.dat"
@@ -651,7 +681,7 @@ for _GEODAT in geoip geosite; do
     else
         rm -f "$GEODIR/${_GEODAT}.dat.tmp"
         warn "${_GEODAT}.dat download failed — geoip/geosite routing rules will not work."
-        warn "Download manually: https://github.com/XTLS/Xray-core/releases/latest/download/${_GEODAT}.dat → $GEODIR/"
+        warn "Download manually: ${GEO_BASE}/${_GEODAT}.dat → $GEODIR/"
     fi
 done
 
@@ -1018,12 +1048,15 @@ else
     echo ""
 fi
 
-MEMO_TUN="${EXIST_TUN:-proxytun2socks0}"
-MEMO_TUN_IP="${EXIST_TUN_IP:-<TUN_IP>}"
-MEMO_TUN_CIDR="${EXIST_TUN_IP:+${EXIST_TUN_IP}/30}"
-MEMO_TUN_CIDR="${MEMO_TUN_CIDR:-<e.g. 10.255.0.1/30>}"
+MEMO_TUN="${EXIST_TUN:-tun100}"
+MEMO_TUN_IP="${EXIST_TUN_IP:-10.255.0.1}"
+if [ -n "${EXIST_TUN_IP:-}" ]; then
+    MEMO_TUN_CIDR="${EXIST_TUN_IP}/30"
+else
+    MEMO_TUN_CIDR="10.255.0.2/30"
+fi
 
-echo "  OPNsense interface & gateway setup:"
+echo "  OPNsense interface & gateway setup (selective routing mode):"
 echo ""
 echo "  5. Interfaces → Assignments"
 echo "       + Add: $MEMO_TUN"
@@ -1048,5 +1081,17 @@ echo "       Source:      LAN net"
 echo "       Destination: <your alias>"
 echo "       Gateway:     PROXYTUN_GW"
 echo ""
+echo "  Native TUN driver (default): xray assigns the interface the address"
+echo "  right after the gateway — use gateway+1 as the static IP"
+echo "  (10.255.0.1/30 gateway → 10.255.0.2/30 on the interface)."
+echo ""
+echo "  Full tunnel mode (Instance → System Routing = Full tunnel) needs no"
+echo "  interface or gateway: set net.fibs=2 in /boot/loader.conf and reboot."
+echo ""
+if [ ! -f /usr/local/etc/xray-core/geoip.dat ] || [ ! -f /usr/local/etc/xray-core/geosite.dat ]; then
+    echo "  NOTE: geoip.dat/geosite.dat are missing — download them before using"
+    echo "  GeoIP/GeoSite routing rules (see the warnings above)."
+    echo ""
+fi
 echo "  To uninstall: sh install.sh uninstall"
 echo ""
