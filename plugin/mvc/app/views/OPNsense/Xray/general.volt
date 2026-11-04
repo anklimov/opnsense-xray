@@ -1,9 +1,13 @@
 {{ partial('OPNsense/Xray/partials/scripts') }}
 
-<link rel="stylesheet" href="/js/xray-codemirror.min.css">
-<script src="/js/xray-codemirror.min.js"></script>
-<script src="/js/xray-javascript.min.js"></script>
-<script src="/js/xray-qrcode.min.js"></script>
+{# v4.2.1: ассеты через alias /ui/ → /usr/local/opnsense/www/ — так же, как
+   грузит свои скрипты ядро. Docroot lighttpd = /usr/local/www/ и не видит
+   /usr/local/opnsense/www/, а server.error-handler-404 отдаёт /js/* как
+   HTML через PHP (MIME mismatch в браузере). #}
+<link rel="stylesheet" href="/ui/js/xray-codemirror.min.css">
+<script src="/ui/js/xray-codemirror.min.js"></script>
+<script src="/ui/js/xray-javascript.min.js"></script>
+<script src="/ui/js/xray-qrcode.min.js"></script>
 
 <ul class="nav nav-tabs" data-tabs="tabs" id="maintabs">
     <li class="active"><a data-toggle="tab" href="#instances">{{ lang._('Instances') }}</a></li>

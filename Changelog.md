@@ -5,6 +5,13 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.2.1] — 2026-11-05 (fork)
+
+### Fixed
+- **Web-ассеты так и не отдавались: `/js/xray-*` → HTML (MIME mismatch), CodeMirror молча деградировал в textarea.** Docroot WebGUI (lighttpd) — `/usr/local/www/`, куда `/usr/local/opnsense/www/js/` не входит; `server.error-handler-404` отдавал такие запросы в PHP, и браузер блокировал «text/html» вместо скриптов. Свои скрипты ядро грузит через alias `/ui/` → `/usr/local/opnsense/www/` — ассеты переведены на `/ui/js/xray-*`. Установщик получил fail-fast проверку наличия каждого ассета и строку `[OK] Web assets installed (N files)`. Диагноз собран по /var/etc/lighttpd.conf-генератору (webgui.inc) + curl-пробам (302 на оба URL без сессии)
+
+---
+
 ## [4.2.0] — 2026-11-05 (fork)
 
 ### Added

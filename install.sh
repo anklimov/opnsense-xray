@@ -18,7 +18,7 @@
 set -e
 set -u
 
-PLUGIN_VERSION="4.2.0"
+PLUGIN_VERSION="4.2.1"
 PLUGIN_DIR="$(dirname "$0")/plugin"
 VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
 
@@ -673,6 +673,19 @@ for _asset in "$PLUGIN_DIR"/web/js/xray/*; do
 done
 # v4.0.7: подчистить старый вариант с подкаталогом (v4.0.2-4.0.6)
 rm -rf /usr/local/opnsense/www/js/xray
+
+# v4.2.1: fail-fast верификация — ассеты едут через alias /ui/js/ и
+# должны лежать в /usr/local/opnsense/www/js/ плоско; их отсутствие
+# раньше проходило молча (редактор деградировал в textarea, QR падал)
+_assets_ok=0
+for _expected in xray-codemirror.min.js xray-javascript.min.js \
+                 xray-qrcode.min.js xray-codemirror.min.css; do
+    if [ ! -f "/usr/local/opnsense/www/js/$_expected" ]; then
+        die "web asset missing: /usr/local/opnsense/www/js/$_expected"
+    fi
+    _assets_ok=$((_assets_ok + 1))
+done
+echo "[OK]  Web assets installed ($_assets_ok files, served at /ui/js/xray-*)"
 
 # Write version file
 echo "$PLUGIN_VERSION" > "$VERSION_FILE"
