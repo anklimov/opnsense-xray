@@ -221,9 +221,11 @@ MSS Clamping для Xray не требуется (в отличие от WireGua
 **Config Source = Custom full config (Raw JSON)** — твой `config.json` используется дословно:
 
 - Редактор CodeMirror с подсветкой синтаксиса JSON
-- **Validate Config** — черновик проверяется через `xray -test` на роутере (именно текст из редактора, а не сохранённый конфиг!)
+- **Комментарии разрешены** — в стиле xray: `//`, `#` и блочные (плагин вырезает их так же, как собственный ридер xray, поэтому конфиг, который принимает `xray -test`, импортируется как есть)
+- **Validate Config** — черновик проверяется через `xray -test` на роутере (именно текст из редактора, а не сохранённый конфиг!); правила GeoIP/GeoSite проверяются по dat-файлам, которые ставит `install.sh`
 - **Format** — pretty-print
-- Нюансы: при legacy-драйвере tun2socks конфиг обязан содержать SOCKS-inbound на настроенном порту; правила маршрутизации / секции балансировщика на raw-режим не действуют (это возможности wizard'а)
+- **Противоречивых GUI-полей нет**: в этом режиме секции TUN/SOCKS/DNS/LB/Server Inbound диалога скрыты, а runtime-параметры выводятся из самого JSON — имя TUN-интерфейса и MTU из inbound'а `tun`, адрес/порт SOCKS (кнопка Test, legacy-драйвер tun2socks) из inbound'а `socks`/`mixed`
+- Нюансы: при legacy-драйвере tun2socks конфиг обязан содержать SOCKS/mixed-inbound; правила маршрутизации / секции балансировщика на raw-режим не действуют (это возможности wizard'а). На FreeBSD нативному `tun`-inbound нужен `"name": "tunN"` и актуальная схема `gateway` — старое поле `address` игнорируется
 
 ---
 
@@ -1004,6 +1006,7 @@ install -m 0755 /tmp/tun2socks-freebsd-amd64 /usr/local/tun2socks/tun2socks
 
 | Версия | Что изменилось |
 |--------|---------------|
+| 4.0.1  | Raw JSON: комментарии в стиле xray (//, #), XRAY_LOCATION_ASSET для geo-данных, runtime-параметры (TUN/SOCKS) выводятся из JSON, противоречивые секции GUI скрыты в raw-режиме |
 | 4.0.0  | **Нативные механизмы Xray**: встроенный TUN inbound (`tun_driver`), вкладка Routing (правила domain/ip/port/geoip/geosite), balancer + burstObservatory (leastPing/roundRobin/leastLoad/random), серверный VLESS-inbound (ws/gRPC/h2/TCP, TLS/Reality, nginx-сниппет), режим Raw JSON с CodeMirror + валидацией черновика, ConfigBuilder, DNS hijack, опция полного туннеля (`net.fibs=2`), требование xray-core 26.10+, установка geo-дат, миграция с v3.x |
 | 3.2.1  | Фикс ротации логов (daemon -H -o + SIGHUP reopen), tun2socks `--config` |
 | 3.2.0  | Форк: группы серверов, импорт подписки, Refresh, переключатель node_source, класс VlessLink |

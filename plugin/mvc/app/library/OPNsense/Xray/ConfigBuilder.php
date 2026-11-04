@@ -78,7 +78,6 @@ class ConfigBuilder
         if ($mode === 'raw') {
             return self::buildRaw($inst);
         }
-
         $proxies  = self::collectProxies($inst, $servers);
         $balancer = $inst['lb_enabled'] && count($proxies) > 0;
         $defaultProxyTag = count($proxies) > 0 ? $proxies[0]['tag'] : null;
@@ -117,7 +116,7 @@ class ConfigBuilder
     }
 
     /**
-     * Нормализует <instance> SimpleXMLElement в плоский массив с дефолтами.
+     * v4.0.1: нормализует SimpleXMLElement <instance> в плоский массив с дефолтами.
      * Аналог старого xray_parse_instance() из xray-service-control.php.
      */
     public static function parseInstance($node): array
@@ -193,6 +192,163 @@ class ConfigBuilder
         ];
     }
 
+    /**
+     * v4.0.1: runtime-параметры raw-инстанса берутся ИЗ САМОГО config.json,
+     * а не из полей GUI (которые в raw-режиме скрыты): имя TUN-интерфейса и
+     * MTU — из tun-inbound, адрес/порт SOCKS — из socks/mixed-inbound
+     * (Test-кнопка, legacy-драйвер tun2socks, lo0-alias). Если JSON не
+     * декодируется — возвращаем как есть: ошибка выплывёт в buildRaw при старте.
+     */
+    public static function extractRuntimeFields(array $inst): array
+    {
+        if ($inst['node_source'] !== 'raw') {
+            return $inst;
+        }
+        $raw = trim((string)($inst['full_config'] ?? ''));
+        if ($raw === '') {
+            return $inst;
+        }
+        $config = json_decode(self::stripJsonComments($raw), true);
+        if (!is_array($config)) {
+            return $inst;
+        }
+
+        $hasTun = false;
+        $hasSocks = false;
+        foreach (($config['inbounds'] ?? []) as $ib) {
+            if (!is_array($ib)) {
+                continue;
+            }
+            $proto = (string)($ib['protocol'] ?? '');
+            if ($proto === 'tun') {
+                $hasTun = true;
+                $settings = is_array($ib['settings'] ?? null) ? $ib['settings'] : [];
+                // FreeBSD: имя обязано быть tunN; без "name" интерфейс не ждём
+                $inst['tun_iface'] = (string)($settings['name'] ?? '');
+                if (!empty($settings['mtu'])) {
+                    $inst['mtu'] = (int)$settings['mtu'];
+                }
+            } elseif ($proto === 'socks' || $proto === 'mixed') {
+                if (!$hasSocks) { // первый socks/mixed inbound
+                    $hasSocks = true;
+                    if (isset($ib['listen'])) {
+                        $inst['socks5_listen'] = (string)$ib['listen'];
+                    }
+                    if (!empty($ib['port'])) {
+                        $inst['socks5_port'] = (int)$ib['port'];
+                    }
+                    $inst['socks5_enabled'] = true;
+                }
+            }
+        }
+        if (!$hasTun) {
+            $inst['tun_iface'] = '';
+        }
+        if (!$hasSocks) {
+            $inst['socks5_enabled'] = false;
+        }
+        return $inst;
+    }
+
+    /**
+     * v4.0.1: вырезает комментарии в стиле xray-core (infra/conf/json/reader.go):
+     * строчные `//` и `#`, блочные "slash-star ... star-slash". Внутри строк
+     * (в т.ч. "https://...") символы не трогаются. json_decode комментарии
+     * не принимает, хотя xray -test такой конфиг считает валидным.
+     */
+    public static function stripJsonComments(string $json): string
+    {
+        $len = strlen($json);
+        $out = '';
+        $state = 'content';
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $json[$i];
+            switch ($state) {
+                case 'content':
+                    if ($ch === '"') {
+                        $state = 'dquote';
+                        $out .= $ch;
+                    } elseif ($ch === "'") {
+                        $state = 'squote';
+                        $out .= $ch;
+                    } elseif ($ch === '\\') {
+                        $state = 'escape';
+                    } elseif ($ch === '#') {
+                        $state = 'comment';
+                    } elseif ($ch === '/') {
+                        $state = 'slash';
+                    } else {
+                        $out .= $ch;
+                    }
+                    break;
+                case 'escape':
+                    $out .= '\\' . $ch;
+                    $state = 'content';
+                    break;
+                case 'dquote':
+                    if ($ch === '"') {
+                        $state = 'content';
+                        $out .= $ch;
+                    } elseif ($ch === '\\') {
+                        $state = 'dquote_escape';
+                        $out .= $ch;
+                    } else {
+                        $out .= $ch;
+                    }
+                    break;
+                case 'dquote_escape':
+                    $out .= $ch;
+                    $state = 'dquote';
+                    break;
+                case 'squote':
+                    if ($ch === "'") {
+                        $state = 'content';
+                        $out .= $ch;
+                    } elseif ($ch === '\\') {
+                        $state = 'squote_escape';
+                        $out .= $ch;
+                    } else {
+                        $out .= $ch;
+                    }
+                    break;
+                case 'squote_escape':
+                    $out .= $ch;
+                    $state = 'squote';
+                    break;
+                case 'comment':
+                    if ($ch === "\n") {
+                        $state = 'content';
+                        $out .= "\n";
+                    }
+                    break;
+                case 'slash':
+                    if ($ch === '/') {
+                        $state = 'comment';
+                    } elseif ($ch === '*') {
+                        $state = 'mlcomment';
+                    } else {
+                        $state = 'content';
+                        $out .= '/' . $ch;
+                    }
+                    break;
+                case 'mlcomment':
+                    if ($ch === '*') {
+                        $state = 'mlstar';
+                    }
+                    break;
+                case 'mlstar':
+                    if ($ch === '/') {
+                        $state = 'content';
+                        $out .= ' ';
+                    } elseif ($ch !== '*') {
+                        $state = 'mlcomment';
+                    }
+                    break;
+            }
+        }
+        return $out;
+    }
+
     /* ═══════════════════════════════════════════════════════════════════════
      *  Загрузка из config.xml
      * ═══════════════════════════════════════════════════════════════════════ */
@@ -250,7 +406,10 @@ class ConfigBuilder
         if ($raw === '') {
             throw new \RuntimeException('config source is "raw" but full config JSON is empty');
         }
-        $config = json_decode($raw, true);
+        // v4.0.1: xray принимает комментарии (//, #, блочные) — json_decode нет.
+        // Strip до декодирования; в runtime-файл уходит нормализованный JSON
+        // (комментарии не сохраняются — источник истины это config.xml).
+        $config = json_decode(self::stripJsonComments($raw), true);
         if (!is_array($config)) {
             throw new \RuntimeException('full config is not valid JSON: ' . json_last_error_msg());
         }

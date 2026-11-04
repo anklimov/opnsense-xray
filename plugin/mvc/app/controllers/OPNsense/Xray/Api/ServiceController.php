@@ -200,8 +200,11 @@ class ServiceController extends ApiMutableServiceControllerBase
             return ['result' => 'failed', 'message' => 'Config is empty'];
         }
 
-        // Быстрая проверка синтаксиса до похода в configd
-        if (json_decode($draft, true) === null && json_last_error() !== JSON_ERROR_NONE) {
+        // v4.0.1: xray принимает комментарии (//, #, блочные), а json_decode —
+        // нет; pre-check делается по strip-версии, в temp-файл уходит ОРИГИНАЛ
+        // (валидирует его сам xray -test)
+        $stripped = \OPNsense\Xray\ConfigBuilder::stripJsonComments($draft);
+        if (json_decode($stripped, true) === null && json_last_error() !== JSON_ERROR_NONE) {
             return ['result' => 'failed', 'message' => 'Invalid JSON: ' . json_last_error_msg()];
         }
 

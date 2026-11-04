@@ -73,6 +73,9 @@ function xray_get_all_instances(): array
             continue;
         }
         $c = ConfigBuilder::parseInstance($inst);
+        // v4.0.1: для raw-инстансов TUN-имя/MTU и SOCKS-адрес/порт берутся
+        // из самого config.json (в raw-режиме поля GUI скрыты)
+        $c = ConfigBuilder::extractRuntimeFields($c);
         $c['inst_uuid'] = $inst_uuid;
         $c['enabled']    = $globalEnabled && (string)($inst->enabled ?? '1') === '1';
         $result[$inst_uuid] = $c;
@@ -198,7 +201,7 @@ function daemon_sup_pid_path(string $pidfile): string
     return '/var/run/xray-daemon-' . basename($pidfile);
 }
 
-function proc_start(string $bin, string $args, string $pidfile, string $logfile = ''): void
+function proc_start(string $bin, string $args, string $pidfile, string $logfile = '', array $env = []): void
 {
     // Лог держит сам daemon(8): -o пишет вывод процесса в файл, -H по SIGHUP
     // закрывает его и открывает заново (SIGHUP шлёт xray-log-reopen.sh из
@@ -206,8 +209,18 @@ function proc_start(string $bin, string $args, string $pidfile, string $logfile 
     // `>> log` открывал файл один раз: после ротации демон писал в удалённый
     // inode, и лог молча пропадал. Свой stdout daemon отдаёт в /dev/null,
     // иначе exec() ждал бы закрытия пайпа.
+    // v4.0.1: $env — переменные окружения процесса (см. XRAY_LOCATION_ASSET).
+    // Имя переменной нельзя заключать в кавычки ('VAR'=x не является присваиванием
+    // в sh) — поэтому ключи валидируются регуляркой, экранируется только значение.
+    $envPrefix = '';
+    foreach ($env as $k => $v) {
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', (string)$k)) {
+            continue;
+        }
+        $envPrefix .= $k . '=' . escapeshellarg((string)$v) . ' ';
+    }
     $log = $logfile !== '' ? $logfile : XRAY_DAEMON_LOG;
-    exec('/usr/sbin/daemon -H -o ' . escapeshellarg($log)
+    exec($envPrefix . '/usr/sbin/daemon -H -o ' . escapeshellarg($log)
        . ' -P ' . escapeshellarg(daemon_sup_pid_path($pidfile))
        . ' -p ' . escapeshellarg($pidfile)
        . ' ' . escapeshellarg($bin) . ' ' . $args . ' > /dev/null 2>&1 &');
@@ -259,7 +272,12 @@ function xray_validate_config(string $confFile): bool
         echo "ERROR: config file not found: {$confFile}\n";
         return false;
     }
-    exec(escapeshellarg(XRAY_BIN) . ' -test -c ' . escapeshellarg($confFile) . ' 2>&1', $out, $rc);
+    // v4.0.1: XRAY_LOCATION_ASSET — xray ищет geoip.dat/geosite.dat в CWD
+    // (у daemon(8)/configd это "/"), а не рядом с конфигом; без env
+    // любые geosite/geoip правила роняли -test и старт
+    exec('XRAY_LOCATION_ASSET=' . escapeshellarg(XRAY_CONF_DIR)
+       . ' ' . escapeshellarg(XRAY_BIN)
+       . ' -test -c ' . escapeshellarg($confFile) . ' 2>&1', $out, $rc);
     if ($rc !== 0) {
         echo "ERROR: xray config validation failed:\n" . implode("\n", $out) . "\n";
         return false;
@@ -424,7 +442,15 @@ function do_start(array $c): bool
 
         $instLog = xray_instance_log($inst_uuid);
         if (!proc_is_running(xray_pid_path($inst_uuid))) {
-            proc_start(XRAY_BIN, 'run -c ' . escapeshellarg(xray_conf_path($inst_uuid)), xray_pid_path($inst_uuid), $instLog);
+            // v4.0.1: XRAY_LOCATION_ASSET — geoip.dat/geosite.dat ищутся
+            // в /usr/local/etc/xray-core, а не в CWD демона
+            proc_start(
+                XRAY_BIN,
+                'run -c ' . escapeshellarg(xray_conf_path($inst_uuid)),
+                xray_pid_path($inst_uuid),
+                $instLog,
+                ['XRAY_LOCATION_ASSET' => XRAY_CONF_DIR]
+            );
             usleep(800000);
         }
         if ($driver === 'tun2socks' && !proc_is_running(t2s_pid_path($inst_uuid))) {
@@ -456,11 +482,14 @@ function xray_instance_status(array $c): array
     $driver = ($c['tun_driver'] ?? 'tun2socks') === 'xray' ? 'xray' : 'tun2socks';
 
     if ($driver === 'xray') {
-        $tun = tun_iface_up($c['tun_iface'] ?? '');
+        // v4.0.1: raw-конфиг может не иметь tun-inbound (или имени) — n/a
+        $tun = ($c['tun_iface'] ?? '') !== ''
+            ? (tun_iface_up($c['tun_iface']) ? 'running' : 'stopped')
+            : 'n/a';
         return [
             'status'    => $xray ? 'ok' : 'stopped',
             'xray_core' => $xray ? 'running' : 'stopped',
-            'tun'       => $tun ? 'running' : 'stopped',
+            'tun'       => $tun,
             'tun2socks' => 'n/a',
             'driver'    => 'xray',
             'inst_uuid' => $inst_uuid,

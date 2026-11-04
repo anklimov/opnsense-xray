@@ -5,6 +5,18 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.0.1] — 2026-11-04 (fork)
+
+### Fixed
+- **Raw-конфиги с комментариями отвергались валидацией.** xray-core принимает комментарии в config.json (`//`, `#`, блочные — `infra/conf/json/reader.go`), а `json_decode` нет: валидный для xray конфиг падал с «Invalid JSON» и в кнопке Validate Config, и при старте (`buildRaw`). Добавлен `ConfigBuilder::stripJsonComments()` — порт xray-ридера (с учётом кавычек и escape: `https://…` не режется); strip выполняется перед decode, в `xray -test` уходит оригинальный черновик
+- **Geosite/geoip правила роняли валидацию и старт.** xray ищет dat-файлы в CWD (у daemon(8)/configd это `/`), а не рядом с конфигом. Теперь процессу xray и `xray -test` передаётся `XRAY_LOCATION_ASSET=/usr/local/etc/xray-core` (проверено: без env — «failed to open geosite.dat», с env — Configuration OK)
+- **Противоречивые GUI-поля в raw-режиме.** Поля TUN/SOCKS больше не конфликтуют с JSON: для raw-инстансов runtime-параметры (имя TUN/MTU из tun-inbound, адрес/порт SOCKS из socks/mixed-inbound) выводятся из самого config.json (`ConfigBuilder::extractRuntimeFields`) — их используют status, syshook, testconnect, ifstats, lo0-alias и legacy-tun2socks. В диалоге соответствующие секции (TUN-детали, SOCKS5, DNS, LB, Server Inbound, Misc) в raw-режиме скрыты целиком
+- **Статус raw-инстанса без tun-inbound** показывал ложный «tun: down» — теперь серый «n/a» (per-instance бейдж и агрегированный)
+- **`'VAR'=value` в sh не является присваиванием** — env-префикс в `proc_start` собирался с закавыченными именами; теперь ключи валидируются регуляркой, экранируется только значение
+- syshook: raw-конфиг без tun-inbound/имени больше не ждёт интерфейс 15 секунд — пропуск с пометкой в логе
+
+---
+
 ## [4.0.0] — 2026-11-04 (fork)
 
 Крупный релиз: нативные механизмы Xray-core вместо внешних демонов.

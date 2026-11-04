@@ -48,7 +48,7 @@
         <id>instance.full_config</id>
         <label>Full Config (Raw JSON)</label>
         <type>textbox</type>
-        <help>Full xray-core config.json used verbatim (Config Source = Custom full config). Validate the draft with the "Validate Config" button before saving. Note: with the tun2socks legacy TUN driver the config must contain a SOCKS inbound at the configured port.</help>
+        <help>Full xray-core config.json used verbatim (Config Source = Custom full config). Comments are allowed — xray style (// and #). Validate the draft with the "Validate Config" button before saving. Runtime parameters (TUN interface name/MTU, SOCKS address/port for the Test button and the legacy tun2socks driver) are taken from THIS json, not from the hidden GUI fields. Note: with the tun2socks legacy TUN driver the config must contain a SOCKS/mixed inbound.</help>
         <hint>{"log":{...},"inbounds":[...],"outbounds":[...],"routing":{...}}</hint>
     </field>
 
@@ -61,7 +61,7 @@
         <label>TUN Driver</label>
         <type>dropdown</type>
         <style>selectpicker</style>
-        <help>"Xray TUN inbound (native)" — the TUN interface is created by xray-core itself (protocol "tun", requires xray-core 26.10+; on FreeBSD the interface name must be tunN). "tun2socks (legacy)" — the external tun2socks daemon forwarding the TUN to the SOCKS inbound.</help>
+        <help>"Xray TUN inbound (native)" — the TUN interface is created by xray-core itself (protocol "tun", requires xray-core 26.10+; on FreeBSD the interface name must be tunN). "tun2socks (legacy)" — the external tun2socks daemon forwarding the TUN to the SOCKS inbound. In Raw JSON mode the TUN details come from your config: native driver expects a "tun" inbound inside it, legacy expects a SOCKS/mixed inbound to forward to.</help>
     </field>
     <field>
         <id>instance.tun_interface</id>

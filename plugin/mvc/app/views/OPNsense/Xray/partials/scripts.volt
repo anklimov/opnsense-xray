@@ -16,14 +16,21 @@
             var xOk = info.xray_core === 'running';
             // v4.0.0: xray-драйвер отдаёт 'tun' (интерфейс), legacy — tun2socks
             var tVal = info.tun || info.tun2socks;
-            var tOk = tVal === 'running';
             var tName = info.driver === 'xray' ? 'tun' : (info.driver === 'tun2socks' ? 'tun2socks' : (info.tun ? 'tun' : 'tun2socks'));
-            return '<span class="label ' + (xOk ? 'label-success' : 'label-danger') + '" style="font-size:11px;">' +
-                'xray: ' + (xOk ? 'up' : 'down') +
-                '</span> ' +
-                '<span class="label ' + (tOk ? 'label-success' : 'label-danger') + '" style="font-size:11px;">' +
-                tName + ': ' + (tOk ? 'up' : 'down') +
-                '</span>';
+            if (tVal === 'n/a') {
+                // raw-инфиг без tun-inbound — серый бейдж вместо ложного "down"
+                return '<span class="label ' + (xOk ? 'label-success' : 'label-danger') + '" style="font-size:11px;">'
+                    + 'xray: ' + (xOk ? 'up' : 'down')
+                    + '</span> '
+                    + '<span class="label label-default" style="font-size:11px;">' + tName + ': n/a</span>';
+            }
+            var tOk = tVal === 'running';
+            return '<span class="label ' + (xOk ? 'label-success' : 'label-danger') + '" style="font-size:11px;">'
+                + 'xray: ' + (xOk ? 'up' : 'down')
+                + '</span> '
+                + '<span class="label ' + (tOk ? 'label-success' : 'label-danger') + '" style="font-size:11px;">'
+                + tName + ': ' + (tOk ? 'up' : 'down')
+                + '</span>';
         }
 
         function applyStatusToGrid() {
@@ -369,10 +376,14 @@
                 instanceStatusCache = data;
 
                 // Aggregate: any instance running = global running
-                var anyXray = false, anyTun = false;
+                var anyXray = false, anyTun = false, tunKnown = false;
                 $.each(data, function (uuid, info) {
                     if (info.xray_core === 'running') anyXray = true;
-                    if ((info.tun || info.tun2socks) === 'running') anyTun = true;
+                    var t = info.tun || info.tun2socks;
+                    if (t && t !== 'n/a') {
+                        tunKnown = true;
+                        if (t === 'running') anyTun = true;
+                    }
                 });
                 var xok = anyXray, tok = anyTun;
                 $('#badge_xray')
@@ -381,8 +392,8 @@
                     .text('xray-core: ' + (xok ? 'running' : 'stopped'));
                 $('#badge_tun')
                     .removeClass('label-success label-danger label-default')
-                    .addClass(tok ? 'label-success' : 'label-danger')
-                    .text('tun: ' + (tok ? 'running' : 'stopped'));
+                    .addClass(!tunKnown ? 'label-default' : (tok ? 'label-success' : 'label-danger'))
+                    .text('tun: ' + (!tunKnown ? 'n/a' : (tok ? 'running' : 'stopped')));
 
                 // Update per-instance status in grid
                 applyStatusToGrid();
@@ -621,22 +632,40 @@
             var $mode = $('[id="instance.node_source"]');
             if (!$mode.length) return;
             var mode = $mode.val() || 'config';
+            var raw = (mode === 'raw');
+
+            // v4.0.1: в raw-режиме противоречивые wizard-секции скрыты целиком —
+            // base_dialog рендерит каждую секцию (header) отдельной таблицей
+            // внутри div.table-responsive. TUN/SOCKS runtime-параметры raw-инстанса
+            // берутся из самого config.json (extractRuntimeFields в бэкенде).
+            var xraySection = function (f) {
+                return $('[id="instance.' + f + '"]').closest('div.table-responsive');
+            };
+            xraySection('socks5_enabled').toggle(!raw);
+            xraySection('dns_mode').toggle(!raw);
+            xraySection('lb_enabled').toggle(!raw);
+            xraySection('srv_enabled').toggle(!raw);
+            xraySection('loglevel').toggle(!raw);
+            // TUN-секция остаётся (tun_driver — поведенческий выбор и для raw),
+            // но детали интерфейса скрыты
+            $('[id="instance.tun_interface"]').closest('tr').toggle(!raw);
+            $('[id="instance.mtu"]').closest('tr').toggle(!raw);
 
             // 1. Источник узла
             $('[id="instance.outbound_config"]').closest('tr').toggle(mode === 'config');
             $('#dlgImportWrap').toggle(mode === 'config');
             $('[id="instance.group"]').closest('tr').toggle(mode === 'group');
             $('[id="instance.server"]').closest('tr').toggle(mode === 'group');
-            $('[id="instance.full_config"]').closest('tr').toggle(mode === 'raw');
+            $('[id="instance.full_config"]').closest('tr').toggle(raw);
             if (rawCm !== null) {
-                $(rawCm.getWrapperElement()).toggle(mode === 'raw');
-                if (mode === 'raw') rawCm.refresh();
+                $(rawCm.getWrapperElement()).toggle(raw);
+                if (raw) rawCm.refresh();
             }
 
             // 2. Footer buttons: raw → Validate/Format, иначе → Preview
-            $('#dlgValidateBtn').toggle(mode === 'raw');
-            $('#dlgFormatBtn').toggle(mode === 'raw');
-            $('#dlgPreviewBtn').toggle(mode !== 'raw');
+            $('#dlgValidateBtn').toggle(raw);
+            $('#dlgFormatBtn').toggle(raw);
+            $('#dlgPreviewBtn').toggle(!raw);
 
             // 3. Список Server ограничиваем выбранной группой (режим group)
             if (mode === 'group') {
@@ -660,15 +689,16 @@
             }
 
             // 4. TUN-драйвер: gateway/auto-routing/auto-dns — только для xray
+            //    (в raw-режиме поля деталей уже скрыты выше)
             var driver = $('[id="instance.tun_driver"]').val() || 'xray';
             var full = $('[id="instance.tun_auto_routing"]').val() === 'full';
-            $('[id="instance.tun_gateway"]').closest('tr').toggle(driver === 'xray');
-            $('[id="instance.tun_auto_routing"]').closest('tr').toggle(driver === 'xray');
-            $('[id="instance.tun_auto_dns"]').closest('tr').toggle(driver === 'xray' && full);
+            $('[id="instance.tun_gateway"]').closest('tr').toggle(!raw && driver === 'xray');
+            $('[id="instance.tun_auto_routing"]').closest('tr').toggle(!raw && driver === 'xray');
+            $('[id="instance.tun_auto_dns"]').closest('tr').toggle(!raw && driver === 'xray' && full);
 
-            // 5. DNS upstream — только в hijack
+            // 5. DNS upstream — только в hijack (и не в raw)
             $('[id="instance.dns_upstream"]').closest('tr')
-                .toggle($('[id="instance.dns_mode"]').val() === 'hijack');
+                .toggle(!raw && $('[id="instance.dns_mode"]').val() === 'hijack');
 
             // 6. LB: custom list — только когда LB включён и режим config
             var lbOn = $('[id="instance.lb_enabled"]').is(':checked');
@@ -677,7 +707,7 @@
             $('[id="instance.lb_probe_interval"]').closest('tr').toggle(lbOn);
             $('[id="instance.lb_custom"]').closest('tr').toggle(lbOn && mode === 'config');
 
-            // 7. Server inbound: поля — только когда включён
+            // 7. Server inbound: поля — только когда включён (секция скрыта в raw)
             var srvOn = $('[id="instance.srv_enabled"]').is(':checked');
             var srvTransport = $('[id="instance.srv_transport"]').val() || 'ws';
             var srvSecurity = $('[id="instance.srv_security"]').val() || 'none';

@@ -9,6 +9,7 @@
  */
 
 require_once('config.inc');
+require_once('/usr/local/opnsense/mvc/app/library/OPNsense/Xray/ConfigBuilder.php');
 
 // ─── Per-instance path helpers (mirrors xray-service-control.php) ────────────
 function xray_pid_path(string $uuid): string  { return "/var/run/xray_core_{$uuid}.pid"; }
@@ -22,6 +23,7 @@ $cfg = OPNsense\Core\Config::getInstance()->object();
 $ins = $cfg->OPNsense->xray->instances ?? null;
 
 $inst = null;
+$instArr = null;
 if ($ins) {
     foreach ($ins->instance as $candidate) {
         if ($instUuid === '' || (string)$candidate['uuid'] === $instUuid) {
@@ -31,7 +33,14 @@ if ($ins) {
     }
 }
 
-$tunIface = (string)($inst->tun_interface ?? 'proxytun2socks0');
+// v4.0.1: единый парсинг полей (для raw-инстансов TUN-имя и SOCKS-порт
+// берутся из самого config.json — extractRuntimeFields)
+if ($inst !== null) {
+    $instArr = OPNsense\Xray\ConfigBuilder::extractRuntimeFields(
+        OPNsense\Xray\ConfigBuilder::parseInstance($inst));
+    $instUuid = (string)$inst['uuid'];
+}
+$tunIface = $instArr !== null ? (string)$instArr['tun_iface'] : 'proxytun2socks0';
 
 // ─── Uptime процесса по PID-файлу ────────────────────────────────────────────
 function proc_uptime(string $pidfile): ?int
@@ -153,7 +162,7 @@ $xrayUptimeSecs = $instUuid !== '' ? proc_uptime(xray_pid_path($instUuid)) : nul
 $t2sUptimeSecs  = $instUuid !== '' ? proc_uptime(t2s_pid_path($instUuid))  : null;
 
 // v4.0.0: драйвер TUN определяет, живёт ли tun2socks у инстанса
-$tunDriver = (string)($inst->tun_driver ?? '');
+$tunDriver = $instArr !== null ? (string)$instArr['tun_driver'] : '';
 if ($tunDriver === '') {
     $tunDriver = 'tun2socks';
 }
@@ -180,12 +189,12 @@ if ($fibsRc === 0 && isset($fibsOut[0]) && ctype_digit(trim($fibsOut[0]))) {
 // Слушающие порты инстанса (sockstat)
 $listenPorts = [];
 $portsToList = [];
-$socksEnabled = (string)($inst->socks5_enabled ?? '1') === '1';
+$socksEnabled = $instArr !== null && $instArr['socks5_enabled'] === true;
 if ($socksEnabled) {
-    $portsToList[] = (int)(string)($inst->socks5_port ?? 10808);
+    $portsToList[] = (int)$instArr['socks5_port'];
 }
-if ((string)($inst->srv_enabled ?? '0') === '1') {
-    $portsToList[] = (int)(string)($inst->srv_port ?? 10086);
+if ($instArr !== null && $instArr['srv_enabled']) {
+    $portsToList[] = (int)$instArr['srv_port'];
 }
 foreach (array_unique($portsToList) as $p) {
     if ($p <= 0 || $p > 65535) {
@@ -205,9 +214,9 @@ foreach (array_unique($portsToList) as $p) {
 // ─── Ping RTT до VPN-сервера ─────────────────────────────────────────────────
 // v3.2.0: адрес берётся из сервера группы, если инстанс работает в режиме group
 // (или это конфиг от v3.1.0, где режима нет, но сервер выбран).
-$outboundJson = (string)($inst->outbound_config ?? '');
-$activeServer = (string)($inst->server ?? '');
-$nodeSource   = (string)($inst->node_source ?? '');
+$outboundJson = $instArr !== null ? (string)$instArr['outbound_config'] : '';
+$activeServer = $instArr !== null ? (string)$instArr['server'] : '';
+$nodeSource   = $instArr !== null ? (string)$instArr['node_source'] : '';
 if ($activeServer !== '' && $nodeSource !== 'config') {
     $groups = $cfg->OPNsense->xray->groups ?? null;
     if ($groups) {

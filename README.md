@@ -221,9 +221,11 @@ A node that disappears from the subscription stays in the group flagged `stale`;
 **Config Source = Custom full config (Raw JSON)** writes your `config.json` verbatim:
 
 - CodeMirror editor with JSON syntax highlighting
-- **Validate Config** — the draft is checked by `xray -test` on the router (not the saved config!)
+- **Comments are allowed** — xray style: `//`, `#` and block comments (the plugin strips them the same way xray's own reader does, so a config accepted by `xray -test` imports as-is)
+- **Validate Config** — the draft is checked by `xray -test` on the router (not the saved config!); GeoIP/GeoSite rules are checked against the dat files installed by `install.sh`
 - **Format** — pretty-print
-- Notes: with the tun2socks legacy driver the config must contain a SOCKS inbound at the configured port; the plugin's routing rules / balancer sections do not apply (they are wizard-only)
+- **No contradictory GUI fields**: in this mode the TUN/SOCKS/DNS/LB/server sections of the dialog are hidden, and the runtime parameters are derived from the JSON itself — the TUN interface name and MTU from the `tun` inbound, the SOCKS address/port (Test button, legacy tun2socks driver) from the `socks`/`mixed` inbound
+- Notes: with the tun2socks legacy driver the config must contain a SOCKS/mixed inbound; the plugin's routing rules / balancer sections do not apply (they are wizard-only). On FreeBSD a native `tun` inbound needs `"name": "tunN"` (and the current `gateway` schema — the old `address` field is ignored)
 
 ---
 
@@ -1006,6 +1008,7 @@ Full changelog in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | Changes |
 |---------|---------|
+| 4.0.1   | Raw JSON: xray-style comments (//, #), XRAY_LOCATION_ASSET for geo data, runtime params (TUN/SOCKS) derived from the JSON, contradictory GUI sections hidden in raw mode |
 | 4.0.0   | **Native Xray mechanisms**: built-in TUN inbound (`tun_driver`), Routing tab (domain/ip/port/geoip/geosite rules), balancer + burstObservatory (leastPing/roundRobin/leastLoad/random), server-side VLESS inbound (ws/gRPC/h2/TCP, TLS/Reality, nginx snippet), Raw JSON mode with CodeMirror + draft validation, ConfigBuilder, DNS hijack, full-tunnel option (`net.fibs=2`), xray-core 26.10+ required, geo dat files installed, v3.x migration |
 | 3.2.1   | Log rotation fix (daemon -H -o + SIGHUP reopen), tun2socks `--config` |
 | 3.2.0   | Fork: server groups, subscription import, Refresh, node_source switch, VlessLink class |

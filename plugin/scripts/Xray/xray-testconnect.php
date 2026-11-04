@@ -12,6 +12,7 @@
  */
 
 require_once('config.inc');
+require_once('/usr/local/opnsense/mvc/app/library/OPNsense/Xray/ConfigBuilder.php');
 
 // UUID инстанса как первый аргумент (из actions_xray.conf %1)
 $instUuid = isset($argv[1]) ? preg_replace('/[^0-9a-fA-F\-]/', '', trim($argv[1])) : '';
@@ -29,13 +30,20 @@ if ($ins) {
     }
 }
 
+// v4.0.1: единый парсинг — для raw-инстансов адрес/порт SOCKS берутся
+// из самого config.json (extractRuntimeFields)
+$ia = $inst !== null
+    ? OPNsense\Xray\ConfigBuilder::extractRuntimeFields(
+        OPNsense\Xray\ConfigBuilder::parseInstance($inst))
+    : null;
+
 // Читаем адрес и порт из конфига найденного инстанса
-$listen = (string)($inst->socks5_listen ?? '127.0.0.1') ?: '127.0.0.1';
-$port   = (int)(string)($inst->socks5_port ?? 10808);
+$listen = $ia !== null ? (string)$ia['socks5_listen'] : '127.0.0.1';
+$listen = $listen !== '' ? $listen : '127.0.0.1';
+$port   = $ia !== null ? (int)$ia['socks5_port'] : 10808;
 
 // v4.0.0: socks-inbound мог быть отключён (серверный/TUN-режим)
-$socksEnabled = (string)($inst->socks5_enabled ?? '1');
-if ($socksEnabled !== '1') {
+if ($ia === null || !$ia['socks5_enabled']) {
     echo "0\n";
     fwrite(STDERR, "SOCKS5 inbound is disabled for this instance\n");
     exit(1);

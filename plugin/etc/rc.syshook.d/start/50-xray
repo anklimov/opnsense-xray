@@ -42,21 +42,21 @@ setup_instance() {
         _lock_tries=$((_lock_tries+1))
     done
 
-    # Read tun_interface, mtu and driver in one PHP call;
-    # Note: SimpleXML elements are never null, so ?? is dead code — use string check.
+    # v4.0.1: чтение параметров инстанса через ConfigBuilder — для raw-инстансов
+    # имя TUN и MTU берутся из самого config.json (extractRuntimeFields)
     _INST_INFO=$(_INST_UUID="$_INST_UUID" php -r '
         set_include_path("/usr/local/etc/inc" . PATH_SEPARATOR . get_include_path());
         require_once("config.inc");
+        require_once("/usr/local/opnsense/mvc/app/library/OPNsense/Xray/ConfigBuilder.php");
         $cfg  = OPNsense\Core\Config::getInstance()->object();
         $uuid = getenv("_INST_UUID");
         foreach ($cfg->OPNsense->xray->instances->instance as $inst) {
             if ((string)$inst["uuid"] === $uuid) {
-                $tun = (string)$inst->tun_interface;
-                $mtu = (string)$inst->mtu;
-                $drv = (string)$inst->tun_driver;
-                echo "TUN_IFACE=" . ($tun !== "" ? $tun : "proxytun2socks0") . "\n";
-                echo "MTU="       . ($mtu !== "" ? $mtu : "1500")            . "\n";
-                echo "DRIVER="    . ($drv !== "" ? $drv : "tun2socks")        . "\n";
+                $c = OPNsense\Xray\ConfigBuilder::extractRuntimeFields(
+                    OPNsense\Xray\ConfigBuilder::parseInstance($inst));
+                echo "TUN_IFACE=" . $c["tun_iface"]  . "\n";
+                echo "MTU="       . $c["mtu"]        . "\n";
+                echo "DRIVER="    . $c["tun_driver"] . "\n";
                 exit(0);
             }
         }
@@ -71,6 +71,12 @@ setup_instance() {
     DRIVER="${DRIVER:-tun2socks}"
 
     echo "[${_INST_UUID}] tun=[$TUN_IFACE] mtu=[$MTU] driver=[$DRIVER]"
+
+    # v4.0.1: raw-конфиг без tun-inbound (или без "name") — ждать нечего
+    if [ -z "$TUN_IFACE" ]; then
+        echo "[${_INST_UUID}] no TUN interface name defined — skipping TUN setup"
+        return 0
+    fi
 
     # Ждём TUN интерфейс до 15 секунд (xray создаёт его сам при старте)
     echo "waiting for $TUN_IFACE..."
