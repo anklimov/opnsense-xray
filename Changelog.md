@@ -5,6 +5,16 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.1.0] — 2026-11-05 (fork)
+
+### Added
+- **Серверный inbound: все протоколы, а не только VLESS.** `srv_protocol`: VLESS / VMess / Trojan / Shadowsocks (включая 2022-blake3 с серверным ключом и ivCheck). Кнопка **Add user** генерирует креденшал по протоколу (UUID / пароль / base64-ключ SS-2022), тег inbound'а сохранён как `vless-in` (легаси, на него ссылаются правила маршрутизации)
+- **Транспорты XHTTP и HTTPUpgrade** (в дополнение к ws/grpc/h2/tcp) с host-header; REALITY разрешён для tcp/grpc/xhttp. nginx-сниппет: вкладка XHTTP, активная вкладка выбирается по текущему транспорту
+- **QR + share-ссылка на каждого клиента.** `ConfigBuilder::clientShareLink()` строит `vless://` / `vmess://` (base64 JSON v2) / `trojan://` / `ss://` (SIP002, base64url); REALITY-ссылки получают `pbk=`, выведенный из приватного ключа на сервере (libsodium x25519, `sodium_crypto_scalarmult_base`). Эвристика TLS: security=none за nginx (listen 127.0.0.1) → в ссылке security=tls. Поля **Public Host / Public Port** задают адрес клиента. API `POST /api/xray/service/clientLink` строит ссылку из ПОЛЕЙ ДИАЛОГА (несохранённое состояние работает), рендер QR — библиотекой qrcode-generator 1.4.4 (MIT, плоский ассет `/js/xray-qrcode.min.js`)
+- GUI: список клиентов под полем users (email / креденшал / QR-кнопка), поля Shadowsocks видны только для shadowsocks, Host — только для ws/h2/xhttp/httpupgrade
+
+---
+
 ## [4.0.7] — 2026-11-04 (fork)
 
 ### Fixed

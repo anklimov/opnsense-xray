@@ -249,6 +249,60 @@ class ServiceController extends ApiMutableServiceControllerBase
     }
 
     /**
+     * v4.1.0: POST /api/xray/service/clientLink — клиентская share-ссылка
+     * (vless:// vmess:// trojan:// ss://) для QR/импорта. Строится из ПОЛЕЙ
+     * ДИАЛОГА (не из config.xml), поэтому работает на несохранённом черновике.
+     * Тело: {"fields": {srv_protocol, srv_transport, ...}, "user": {…}}.
+     */
+    public function clientLinkAction()
+    {
+        if (!$this->request->isPost()) {
+            return ['result' => 'failed', 'message' => 'POST required'];
+        }
+        $body   = json_decode((string)file_get_contents('php://input'), true);
+        $fields = is_array($body) && is_array($body['fields'] ?? null) ? $body['fields'] : [];
+        $user   = is_array($body) && is_array($body['user'] ?? null) ? $body['user'] : null;
+        if ($user === null) {
+            return ['result' => 'failed', 'message' => 'Missing "user" object in request body'];
+        }
+
+        // дефолты как в parseInstance — затем перекрываем полями диалога
+        $inst = [
+            'srv_protocol'   => 'vless',
+            'srv_listen'     => '127.0.0.1',
+            'srv_port'       => 10086,
+            'srv_transport'  => 'ws',
+            'srv_path'       => '',
+            'srv_host'       => '',
+            'srv_security'   => 'none',
+            'srv_ss_method'  => 'aes-256-gcm',
+            'srv_ss_key'     => '',
+            'srv_public_host' => '',
+            'srv_public_port' => 0,
+            'srv_tls_cert'   => '',
+            'srv_tls_key'    => '',
+            'srv_reality_privatekey' => '',
+            'srv_reality_shortids'   => '',
+            'srv_reality_servernames' => '',
+            'srv_reality_dest' => '',
+        ];
+        foreach ($inst as $k => $def) {
+            if (array_key_exists($k, $fields) && (is_scalar($fields[$k]) || $fields[$k] === null)) {
+                $inst[$k] = (string)$fields[$k];
+            }
+        }
+        $inst['srv_port'] = (int)$inst['srv_port'];
+        $inst['srv_public_port'] = (int)$inst['srv_public_port'];
+
+        try {
+            $link = \OPNsense\Xray\ConfigBuilder::clientShareLink($inst, $user);
+            return ['result' => 'ok', 'name' => $link['name'], 'uri' => $link['uri']];
+        } catch (\Exception $e) {
+            return ['result' => 'failed', 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
      * v4.0.0: POST /api/xray/service/previewConfig/{uuid} — сгенерированный
      * config.json инстанса (кнопка Preview Generated Config). Сборка
      * происходит в процессе через ConfigBuilder, без смены файла на диске.

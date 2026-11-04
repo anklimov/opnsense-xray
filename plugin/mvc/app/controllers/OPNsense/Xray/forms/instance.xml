@@ -187,9 +187,16 @@
     </field>
     <field>
         <id>instance.srv_enabled</id>
-        <label>Enable Incoming VLESS</label>
+        <label>Enable Server Inbound</label>
         <type>checkbox</type>
-        <help>Accept incoming proxy connections (the engine works as a VLESS server), e.g. fronted by nginx. Combine with routing rules on inboundTag "vless-in" for per-domain routing of incoming clients.</help>
+        <help>Accept incoming proxy connections (the engine works as a VLESS/VMess/Trojan/Shadowsocks server), e.g. fronted by nginx. Combine with routing rules on inboundTag "vless-in" for per-domain routing of incoming clients.</help>
+    </field>
+    <field>
+        <id>instance.srv_protocol</id>
+        <label>Protocol</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>Proxy protocol for incoming clients: VLESS (recommended, supports flow/REALITY), VMess, Trojan or Shadowsocks.</help>
     </field>
     <field>
         <id>instance.srv_listen</id>
@@ -209,7 +216,7 @@
         <id>instance.srv_users</id>
         <label>Users (JSON)</label>
         <type>textbox</type>
-        <help>Clients allowed to connect: [{"id":"&lt;uuid&gt;","email":"user1","flow":""}]. Use the "Add user" button below the editor to append a generated UUID.</help>
+        <help>Clients allowed to connect. VLESS/VMess: [{"id":"&lt;uuid&gt;","email":"user1","flow":""}] (flow only for VLESS, e.g. xtls-rprx-vision). Trojan/Shadowsocks: [{"password":"secret","email":"user1"}]. Use the "Add user" button below the editor — it generates the right credential for the selected protocol. The QR button next to each user shows the import link.</help>
         <hint>[{"id":"b831381d-6324-4d53-ad4f-8cda48b30811","email":"user1"}]</hint>
     </field>
     <field>
@@ -217,14 +224,20 @@
         <label>Transport</label>
         <type>dropdown</type>
         <style>selectpicker</style>
-        <help>WebSocket is the usual choice behind an nginx reverse proxy; gRPC also works behind nginx (grpc_pass); TCP/HTTP2 for direct exposure.</help>
+        <help>WebSocket is the usual choice behind an nginx reverse proxy; XHTTP likewise (plain proxy_pass, needs a path); gRPC behind nginx (grpc_pass); TCP/HTTP2 for direct exposure. HTTPUpgrade is a lighter ws-like fallback.</help>
     </field>
     <field>
         <id>instance.srv_path</id>
         <label>Path / Service Name</label>
         <type>text</type>
-        <help>WebSocket path or gRPC serviceName (h2 path). Must match the nginx location.</help>
+        <help>WebSocket/XHTTP/HTTP2 path or gRPC serviceName. Must match the nginx location.</help>
         <hint>Default: /vless</hint>
+    </field>
+    <field>
+        <id>instance.srv_host</id>
+        <label>Host Header</label>
+        <type>text</type>
+        <help>Host header for WebSocket/XHTTP/HTTP2/HTTPUpgrade (also the default SNI in client links). Leave empty for none.</help>
     </field>
     <field>
         <id>instance.srv_security</id>
@@ -232,6 +245,19 @@
         <type>dropdown</type>
         <style>selectpicker</style>
         <help>"None" — TLS is terminated by nginx in front (recommended). "TLS" — xray terminates TLS itself with the certificate files below. "Reality" — direct exposure without nginx (TCP only).</help>
+    </field>
+    <field>
+        <id>instance.srv_ss_method</id>
+        <label>Shadowsocks Method</label>
+        <type>dropdown</type>
+        <style>selectpicker</style>
+        <help>Encryption method for the Shadowsocks protocol (Shadowsocks-2022 also needs the server key below; user passwords are then base64 keys of matching length).</help>
+    </field>
+    <field>
+        <id>instance.srv_ss_key</id>
+        <label>Shadowsocks-2022 Server Key</label>
+        <type>text</type>
+        <help>Server key for 2022-blake3 methods, base64: openssl rand -base64 32 (for -256-), 16 bytes for -128-.</help>
     </field>
     <field>
         <id>instance.srv_tls_cert</id>
@@ -269,6 +295,18 @@
         <label>Reality Dest (fallback)</label>
         <type>text</type>
         <help>Fallback target for non-Reality handshakes, e.g. example.com:443. Required with Reality.</help>
+    </field>
+    <field>
+        <id>instance.srv_public_host</id>
+        <label>Public Host (links/QR)</label>
+        <type>text</type>
+        <help>Public hostname/IP clients connect to — used in share links and QR codes. Behind nginx: your domain; direct exposure: the WAN address.</help>
+    </field>
+    <field>
+        <id>instance.srv_public_port</id>
+        <label>Public Port (links/QR)</label>
+        <type>text</type>
+        <help>Public port for links/QR: 443 behind nginx, otherwise the Listen Port above.</help>
     </field>
     <field>
         <id>instance.srv_accept_proxy_protocol</id>

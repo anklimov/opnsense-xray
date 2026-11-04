@@ -10,7 +10,7 @@
 
 **Xray-core VPN plugin for OPNsense** — v4.0.0 (fork of [MrTheory/os-xray](https://github.com/MrTheory/os-xray), see [what differs](#fork-what-differs-from-upstream))
 
-Native Xray-core VPN for OPNsense: the **built-in TUN inbound** intercepts traffic (no tun2socks needed), the **xray routing engine** decides what goes where (domain/IP/port/GeoIP/GeoSite rules), **balancer + observatory** (leastPing / roundRobin / leastLoad / random) pick a healthy exit node, and a **server-side VLESS inbound** (fronted by nginx if you like) turns the box into an entry point. The full `config.json` can be edited as Raw JSON with syntax highlighting and `xray -test` validation. VLESS+Reality via wizard or custom config — any protocol/transport. Bypasses DPI blocking by disguising traffic as legitimate TLS.
+Native Xray-core VPN for OPNsense: the **built-in TUN inbound** intercepts traffic (no tun2socks needed), the **xray routing engine** decides what goes where (domain/IP/port/GeoIP/GeoSite rules), **balancer + observatory** (leastPing / roundRobin / leastLoad / random) pick a healthy exit node, and a **server-side inbound** — VLESS / VMess / Trojan / Shadowsocks (fronted by nginx if you like) — turns the box into an entry point, with per-client QR share links. The full `config.json` can be edited as Raw JSON with syntax highlighting and `xray -test` validation. VLESS+Reality via wizard or custom config — any protocol/transport. Bypasses DPI blocking by disguising traffic as legitimate TLS.
 
 ---
 
@@ -23,7 +23,7 @@ This is a fork of [MrTheory/os-xray](https://github.com/MrTheory/os-xray) (branc
 - **Native TUN inbound** (`"protocol": "tun"`) — xray-core creates the interface itself (verified against `proxy/tun/tun_freebsd.go` in Xray-core 26.10+); tun2socks remains as a per-instance legacy fallback (`tun_driver`). New instance default: interface `tun100`, gateway `10.255.0.1/30`.
 - **xray routing engine** — new model `OPNsense\Xray\RoutingRule` (`//OPNsense/xray/routing_rules`), a **Routing** tab and `api/xray/rule/*`: rules by domain / ip / port / sourcePort / network / inboundTag / **geoip** / **geosite** → proxy / balancer / direct / block. `install.sh` downloads `geoip.dat`/`geosite.dat`; the old `bypass_networks` migrates into a rule.
 - **Balancer + observatory** — `lb_enabled` with leastPing / roundRobin / leastLoad / random strategies (all confirmed in `app/router/config.go`), members = all servers of the selected group or a custom outbound list; the builder emits `routing.balancers` + `burstObservatory` + a catch-all rule; `fallbackTag` = first node, so a dead node fails the connection instead of leaking traffic directly.
-- **Server-side inbound (VLESS)** — the engine accepts incoming connections (WebSocket behind nginx, gRPC, h2, TCP/Reality), users via JSON + UUID generator button, arbitrary extra inbounds (vmess/trojan/ss/dokodemo), per-instance `srv_default_outbound`, and an nginx snippet generator in the dialog.
+- **Server-side inbound** — VLESS/VMess/Trojan/Shadowsocks (incl. SS-2022), transports WebSocket/XHTTP/gRPC/H2/HTTPUpgrade/TCP, security none (nginx TLS)/TLS/REALITY; protocol-aware user generator and a **per-client QR + share link** modal; nginx snippet generator (auto-selects the tab for your transport)
 - **Raw JSON mode** — `node_source` extended to `config | group | none | raw`: the full `config.json` in a CodeMirror editor with **Validate Config** (draft, via `xray -test`), **Format** and **Preview Generated Config** buttons.
 - **ConfigBuilder** (`mvc/app/library/OPNsense/Xray/ConfigBuilder.php`) — the single source of config generation used by start/reconfigure/validate/preview; config assembly is no longer duplicated in the service script. Strict config errors (port clashes, `tunN` naming, balancer action without LB, …).
 - **Full tunnel option** — `tun_auto_routing = full` makes xray manage system routes itself (`autoSystemRoutingTable`, escape FIB via `autoOutboundsInterface`, optional `autoSystemDnsToGateway`); requires `net.fibs=2`, shown in Diagnostics.
@@ -41,7 +41,7 @@ This is a fork of [MrTheory/os-xray](https://github.com/MrTheory/os-xray) (branc
 - **Native Xray TUN inbound** — the TUN interface is created by xray-core itself (`"protocol": "tun"`), no external daemons; tun2socks remains as a per-instance legacy fallback
 - **xray routing engine** — per-instance rules by domain / IP / port / sourcePort / network / inboundTag / **GeoIP** / **GeoSite** (dat files installed automatically), with `Preview Generated Config` showing the result
 - **Balancing + health checks** — balancer with leastPing / roundRobin / leastLoad / random strategies and a background `burstObservatory` probing every member; all servers of a group or a custom outbound list become members
-- **Server-side inbound (VLESS)** — accept incoming proxy connections (WebSocket behind nginx, gRPC, h2, or TCP/Reality directly); nginx snippet generator in the dialog; extra inbounds (vmess/trojan/ss/dokodemo) via a JSON list
+- **Server-side inbound** — accept incoming proxy connections: VLESS/VMess/Trojan/SS over WebSocket/XHTTP/gRPC/H2/HTTPUpgrade/TCP with none/TLS/REALITY; QR + share links per client; extra inbounds via a JSON list
 - **Raw JSON mode** — the full `config.json` in a CodeMirror editor with syntax highlighting, **Validate Config** (draft, via `xray -test`) and **Format** buttons; wizard mode generates everything from GUI fields
 - **Config Source switch** — group / own JSON / server-only / raw full config; the dialog shows only the fields of the chosen mode
 - **Server groups + subscription import** — import a list of `vless://` links as a group, then pick the active node from a dropdown; **Refresh** re-fetches the list on demand
@@ -230,18 +230,23 @@ A node that disappears from the subscription stays in the group flagged `stale`;
 
 ---
 
-## Server Inbound (incoming VLESS behind nginx)
+## Server Inbound (incoming proxy behind nginx)
 
-The engine can also accept connections — the box becomes a proxy entry point. Enable **Incoming VLESS** in the instance dialog:
+The engine can also accept connections — the box becomes a proxy entry point. Enable **Server Inbound** in the instance dialog:
 
-1. **Users (JSON)** — click **Add user** to append a generated UUID, e.g. `[{"id":"…","email":"user1","flow":""}]`
-2. **Transport** — `WebSocket` (behind nginx), `gRPC`, `HTTP/2` or `TCP`; set path/service name
-3. **Security** — `None` (TLS terminates on nginx), `TLS` (own certificate files) or `Reality` (direct exposure, TCP only)
-4. Click **nginx snippet** — a ready configuration for the current settings (WS / gRPC / stream tabs) to paste into the nginx plugin (Services → Nginx) or a custom include
-5. Open the public port in **Firewall → Rules** (WAN) if exposing directly
-6. **Incoming Traffic Default** — where clients' traffic goes when no rule matches: `direct`, `proxy` (chain through the upstream) or `balancer`; route per-domain with a rule on `inboundTag: vless-in`
+1. **Protocol** — `VLESS` (recommended: flow/REALITY support), `VMess`, `Trojan` or `Shadowsocks` (incl. 2022-blake3 with a server key)
+2. **Users** — click **Add user**: it generates the right credential for the selected protocol (UUID for VLESS/VMess, random password for Trojan/Shadowsocks, base64 key for SS-2022). Each user gets a **QR** button: a modal with the import link (`vless://`, `vmess://`, `trojan://`, `ss://`) and a QR code to scan with v2rayNG/Nekoray/Streisand — built from the current dialog state, no save needed
+3. **Transport** — `WebSocket`, `XHTTP`, `gRPC`, `HTTP/2`, `HTTPUpgrade` (all behind nginx) or `TCP` (direct); set path/service name and Host header
+4. **Security** — `None` (TLS terminates on nginx), `TLS` (own certificate files) or `Reality` (direct exposure; TCP/gRPC/XHTTP)
+5. **Public Host / Public Port (links/QR)** — what clients connect to (your domain + 443 behind nginx; WAN IP + Listen Port when direct). Used by the QR/link generator
+6. Click **nginx snippet** — a ready configuration for the current settings (WS / XHTTP / gRPC / stream tabs, auto-selected for your transport) to paste into the nginx plugin (Services → Nginx) or a custom include
+7. Open the public port in **Firewall → Rules** (WAN) if exposing directly
+8. **Incoming Traffic Default** — where clients' traffic goes when no rule matches: `direct`, `proxy` (chain through the upstream) or `balancer`; route per-domain with a rule on `inboundTag: vless-in` (the tag is historical — it is used for every protocol)
 
-Client link: `vless://<uuid>@<your-host>:443?security=tls&type=ws&path=/vless#my-opnsense` (with nginx terminating TLS on 443).
+Example client link (VLESS behind nginx, nginx terminates TLS on 443):
+`vless://<uuid>@<your-host>:443?security=tls&sni=<your-host>&fp=chrome&type=xhttp&path=/vless#my-opnsense`
+
+The QR generator derives the Reality public key from the private one server-side (libsodium x25519), so Reality links carry a ready `pbk=`.
 
 ---
 

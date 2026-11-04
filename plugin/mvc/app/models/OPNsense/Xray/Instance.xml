@@ -179,6 +179,17 @@
             <srv_enabled type="BooleanField">
                 <Default>0</Default>
             </srv_enabled>
+            <!-- v4.1.0: протокол серверного inbound (раньше был только VLESS) -->
+            <srv_protocol type="OptionField">
+                <Default>vless</Default>
+                <Required>Y</Required>
+                <OptionValues>
+                    <vless>VLESS</vless>
+                    <vmess>VMess</vmess>
+                    <trojan>Trojan</trojan>
+                    <shadowsocks>Shadowsocks</shadowsocks>
+                </OptionValues>
+            </srv_protocol>
             <srv_listen type="TextField">
                 <Default>127.0.0.1</Default>
                 <Required>N</Required>
@@ -189,7 +200,8 @@
                 <Default>10086</Default>
                 <Required>N</Required>
             </srv_port>
-            <!-- JSON-массив пользователей: [{"id":"uuid","email":"user1","flow":""}] -->
+            <!-- JSON-массив пользователей: [{"id":"uuid","email":"user1","flow":""}]
+                 v4.1.0: для trojan/shadowsocks вместо id используется "password" -->
             <srv_users type="TextField">
                 <Required>N</Required>
                 <Default></Default>
@@ -202,12 +214,19 @@
                     <tcp>TCP</tcp>
                     <grpc>gRPC</grpc>
                     <h2>HTTP/2</h2>
+                    <xhttp>XHTTP (behind nginx)</xhttp>
+                    <httpupgrade>HTTPUpgrade</httpupgrade>
                 </OptionValues>
             </srv_transport>
             <srv_path type="TextField">
                 <Default>/vless</Default>
                 <Required>N</Required>
             </srv_path>
+            <!-- v4.1.0: Host для ws/h2/xhttp/httpupgrade; SNI по умолчанию в ссылках -->
+            <srv_host type="TextField">
+                <Required>N</Required>
+                <Default></Default>
+            </srv_host>
             <srv_security type="OptionField">
                 <Default>none</Default>
                 <Required>Y</Required>
@@ -217,6 +236,33 @@
                     <reality>Reality (direct exposure, no nginx)</reality>
                 </OptionValues>
             </srv_security>
+            <!-- v4.1.0: метод Shadowsocks (srv_protocol=shadowsocks) -->
+            <srv_ss_method type="OptionField">
+                <Default>aes-256-gcm</Default>
+                <Required>Y</Required>
+                <OptionValues>
+                    <aes-256-gcm>aes-256-gcm</aes-256-gcm>
+                    <aes-128-gcm>aes-128-gcm</aes-128-gcm>
+                    <chacha20-ietf-poly1305>chacha20-ietf-poly1305</chacha20-ietf-poly1305>
+                    <blake3-aes-128-gcm>2022-blake3-aes-128-gcm</blake3-aes-128-gcm>
+                    <blake3-aes-256-gcm>2022-blake3-aes-256-gcm</blake3-aes-256-gcm>
+                </OptionValues>
+            </srv_ss_method>
+            <!-- v4.1.0: серверный ключ Shadowsocks-2022 (обязателен для blake3-методов) -->
+            <srv_ss_key type="TextField">
+                <Required>N</Required>
+                <Default></Default>
+            </srv_ss_key>
+            <!-- v4.1.0: публичные host/port для клиентских ссылок и QR
+                 (за nginx: домен и 443; напрямую — WAN-IP и srv_port) -->
+            <srv_public_host type="TextField">
+                <Required>N</Required>
+                <Default></Default>
+            </srv_public_host>
+            <srv_public_port type="PortField">
+                <Required>N</Required>
+                <Default></Default>
+            </srv_public_port>
             <srv_tls_cert type="TextField">
                 <Required>N</Required>
                 <Default></Default>

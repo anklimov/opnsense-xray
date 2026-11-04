@@ -171,12 +171,18 @@ class ConfigBuilder
             'lb_custom'      => $s('lb_custom'),
 
             'srv_enabled'    => $b('srv_enabled'),
+            'srv_protocol'   => $s('srv_protocol', 'vless'),
             'srv_listen'     => $s('srv_listen', '127.0.0.1'),
             'srv_port'       => (int)$s('srv_port', '10086'),
             'srv_users'      => $s('srv_users'),
             'srv_transport'  => $s('srv_transport', 'ws'),
             'srv_path'       => $s('srv_path'),
+            'srv_host'       => $s('srv_host'),
             'srv_security'   => $s('srv_security', 'none'),
+            'srv_ss_method'  => $s('srv_ss_method', 'aes-256-gcm'),
+            'srv_ss_key'     => $s('srv_ss_key'),
+            'srv_public_host' => $s('srv_public_host'),
+            'srv_public_port' => (int)$s('srv_public_port', '0'),
             'srv_tls_cert'   => $s('srv_tls_cert'),
             'srv_tls_key'    => $s('srv_tls_key'),
             'srv_reality_privatekey' => $s('srv_reality_privatekey'),
@@ -626,7 +632,7 @@ class ConfigBuilder
         }
 
         if ($inst['srv_enabled']) {
-            $inbounds[] = self::buildVlessInbound($inst);
+            $inbounds[] = self::buildSrvInbound($inst);
             if ($inst['socks5_enabled'] && $inst['socks5_port'] === $inst['srv_port']) {
                 throw new \RuntimeException('SOCKS5 port and server inbound port must differ');
             }
@@ -657,32 +663,88 @@ class ConfigBuilder
         return $inbounds;
     }
 
-    private static function buildVlessInbound(array $inst): array
+    /**
+     * v4.1.0: серверный inbound — VLESS/VMess/Trojan/Shadowsocks (раньше
+     * был только VLESS). Тег inbound'а сохранён как "vless-in" (легаси-имя
+     * из v4.0.0, на него ссылаются правила маршрутизации существующих
+     * инстансов) независимо от протокола.
+     */
+    private static function buildSrvInbound(array $inst): array
     {
-        $users = json_decode($inst['srv_users'], true);
+        // v4.1.0: дефолты — чтобы build() принимал массивы, собранные до
+        // появления полей (и упрощал тесты)
+        $protocol = $inst['srv_protocol'] ?? 'vless';
+        $users = json_decode($inst['srv_users'] ?? '[]', true);
         if (!is_array($users) || empty($users)) {
             throw new \RuntimeException(
                 'server inbound is enabled but srv_users is empty — must be a JSON array like '
-                . '[{"id":"<uuid>","email":"user1","flow":""}]'
+                . '[{"id":"<uuid>","email":"user1","flow":""}] (vless/vmess) or '
+                . '[{"password":"secret","email":"user1"}] (trojan/shadowsocks)'
             );
         }
+
+        $clients = [];
         foreach ($users as $idx => $u) {
-            if (!is_array($u) || empty($u['id'])) {
-                throw new \RuntimeException("srv_users[{$idx}]: missing \"id\" (client UUID)");
+            if (!is_array($u)) {
+                throw new \RuntimeException("srv_users[{$idx}]: each entry must be an object");
             }
+            $email = (string)($u['email'] ?? ('client' . ($idx + 1)));
+            if ($protocol === 'vless' || $protocol === 'vmess') {
+                if (empty($u['id'])) {
+                    throw new \RuntimeException("srv_users[{$idx}]: missing \"id\" (client UUID) for {$protocol}");
+                }
+                $client = ['id' => (string)$u['id'], 'email' => $email];
+                if ($protocol === 'vless' && !empty($u['flow'])) {
+                    $client['flow'] = (string)$u['flow'];
+                }
+            } else {
+                // trojan / shadowsocks
+                if (empty($u['password'])) {
+                    throw new \RuntimeException("srv_users[{$idx}]: missing \"password\" for {$protocol}");
+                }
+                $client = ['password' => (string)$u['password'], 'email' => $email];
+            }
+            $clients[] = $client;
         }
 
-        $transport = $inst['srv_transport'];
-        $stream = ['network' => $transport];
+        $transport = $inst['srv_transport'] ?? 'ws';
+        $host  = $inst['srv_host'] ?? '';
+        $path  = $inst['srv_path'] ?? '';
+        $defaultPath = $path !== '' ? $path : '/vless';
+        $stream = ['network' => $transport === 'h2' ? 'http' : $transport];
         switch ($transport) {
             case 'ws':
-                $stream['wsSettings'] = ['path' => $inst['srv_path'] !== '' ? $inst['srv_path'] : '/vless'];
+                $ws = ['path' => $defaultPath];
+                if ($host !== '') {
+                    $ws['host'] = $host;
+                }
+                $stream['wsSettings'] = $ws;
                 break;
             case 'grpc':
-                $stream['grpcSettings'] = ['serviceName' => $inst['srv_path'] !== '' ? $inst['srv_path'] : 'vless'];
+                $stream['grpcSettings'] = ['serviceName' => $path !== '' ? $path : 'vless'];
                 break;
             case 'h2':
-                $stream['httpSettings'] = ['path' => $inst['srv_path'] !== '' ? $inst['srv_path'] : '/vless'];
+                $h2 = ['path' => $defaultPath];
+                if ($host !== '') {
+                    $h2['host'] = [$host];
+                }
+                $stream['httpSettings'] = $h2;
+                break;
+            case 'xhttp':
+                // v4.1.0: XHTTP — как у пользователя за nginx (mode stream-one
+                // на клиенте; серверу достаточно auto)
+                $xh = ['path' => $defaultPath, 'mode' => 'auto'];
+                if ($host !== '') {
+                    $xh['host'] = $host;
+                }
+                $stream['xhttpSettings'] = $xh;
+                break;
+            case 'httpupgrade':
+                $hu = ['path' => $defaultPath];
+                if ($host !== '') {
+                    $hu['host'] = $host;
+                }
+                $stream['httpupgradeSettings'] = $hu;
                 break;
             case 'tcp':
                 break;
@@ -690,7 +752,8 @@ class ConfigBuilder
                 throw new \RuntimeException("unknown server transport {$transport}");
         }
 
-        switch ($inst['srv_security']) {
+        $security = $inst['srv_security'] ?? 'none';
+        switch ($security) {
             case 'none':
                 $stream['security'] = 'none';
                 break;
@@ -706,8 +769,9 @@ class ConfigBuilder
                 ];
                 break;
             case 'reality':
-                if ($transport !== 'tcp') {
-                    throw new \RuntimeException('Reality server inbound requires TCP transport');
+                // v4.1.0: Reality поддерживает tcp/grpc/xhttp (не только tcp)
+                if (!in_array($transport, ['tcp', 'grpc', 'xhttp'], true)) {
+                    throw new \RuntimeException('Reality server inbound requires TCP, gRPC or XHTTP transport');
                 }
                 if ($inst['srv_reality_dest'] === '' || $inst['srv_reality_privatekey'] === '') {
                     throw new \RuntimeException('Reality server inbound requires dest and privateKey');
@@ -729,18 +793,201 @@ class ConfigBuilder
             $stream['sockopt'] = ['acceptProxyProtocol' => true];
         }
 
+        switch ($protocol) {
+            case 'vless':
+                $settings = ['clients' => $clients, 'decryption' => 'none'];
+                break;
+            case 'vmess':
+            case 'trojan':
+                $settings = ['clients' => $clients];
+                break;
+            case 'shadowsocks':
+                $method = self::ssMethod($inst['srv_ss_method'] ?? 'aes-256-gcm');
+                $is2022 = strpos($method, '2022-blake3-') === 0;
+                if ($is2022 && ($inst['srv_ss_key'] ?? '') === '') {
+                    throw new \RuntimeException(
+                        'Shadowsocks-2022 requires the server key (srv_ss_key), '
+                        . 'base64 of 16/32 bytes: openssl rand -base64 32'
+                    );
+                }
+                $settings = ['method' => $method, 'clients' => $clients];
+                if ($is2022) {
+                    $settings['password'] = $inst['srv_ss_key'];
+                    $settings['ivCheck'] = true;
+                }
+                break;
+            default:
+                throw new \RuntimeException("unknown server protocol {$protocol}");
+        }
+
         return [
             'tag'      => 'vless-in',
             'listen'   => $inst['srv_listen'],
             'port'     => $inst['srv_port'],
-            'protocol' => 'vless',
-            'settings' => [
-                'clients'    => $users,
-                'decryption' => 'none',
-            ],
+            'protocol' => $protocol,
+            'settings' => $settings,
             'streamSettings' => $stream,
             'sniffing' => ['enabled' => true, 'destOverride' => ['http', 'tls']],
         ];
+    }
+
+    /**
+     * v4.1.0: клиентская share-ссылка (vless:// vmess:// trojan:// ss://)
+     * для QR и импорта в клиент. Публичные host/port — из srv_public_*
+     * (за nginx — домен и 443), fallback: srv_host, затем srv_listen.
+     *
+     * Эвристика TLS: security=none за nginx (listen 127.0.0.1) означает,
+     * что TLS терминирует nginx — клиенту в ссылке ставим tls.
+     */
+    public static function clientShareLink(array $inst, array $user): array
+    {
+        $protocol = $inst['srv_protocol'] ?? 'vless';
+        $host = (($inst['srv_public_host'] ?? '') !== '') ? $inst['srv_public_host']
+              : ((($inst['srv_host'] ?? '') !== '') ? $inst['srv_host']
+              : ($inst['srv_listen'] ?? '127.0.0.1'));
+        if ($host === '' || $host === '0.0.0.0') {
+            throw new \RuntimeException(
+                'client link needs a public host: fill "Public Host" (e.g. your domain) in the Server Inbound section'
+            );
+        }
+        $port = (int)($inst['srv_public_port'] ?? 0) > 0 ? (int)$inst['srv_public_port'] : (int)($inst['srv_port'] ?? 0);
+
+        $name = (string)($user['email'] ?? 'client');
+        $transport = $inst['srv_transport'] ?? 'ws';
+        $net = $transport === 'h2' ? 'http' : $transport;
+        $path = (($inst['srv_path'] ?? '') !== '') ? $inst['srv_path'] : '/vless';
+        $sec = $inst['srv_security'] ?? 'none';
+
+        $clientTls = 'none';
+        if ($sec === 'reality') {
+            $clientTls = 'reality';
+        } elseif ($sec === 'tls'
+            || ($sec === 'none' && ($inst['srv_listen'] ?? '') === '127.0.0.1')) {
+            $clientTls = 'tls';
+        }
+
+        $query = ['type' => $net];
+        if ($clientTls !== 'none') {
+            $query['security'] = $clientTls;
+            $query['sni'] = $host;
+            $query['fp'] = 'chrome';
+            if ($clientTls === 'reality') {
+                $pbk = self::realityPublicKey($inst['srv_reality_privatekey'] ?? '');
+                if ($pbk === null) {
+                    throw new \RuntimeException(
+                        'cannot derive the Reality public key from privateKey '
+                        . '(need libsodium and a base64 x25519 private key)'
+                    );
+                }
+                $query['pbk'] = $pbk;
+                $sids = self::splitValues($inst['srv_reality_shortids'] ?? '');
+                if (!empty($sids)) {
+                    $query['sid'] = $sids[0];
+                }
+            }
+        }
+        if ($transport === 'grpc') {
+            $query['serviceName'] = (($inst['srv_path'] ?? '') !== '') ? $inst['srv_path'] : 'vless';
+        } elseif ($transport !== 'tcp') {
+            $query['path'] = $path;
+            if (($inst['srv_host'] ?? '') !== '') {
+                $query['host'] = $inst['srv_host'];
+            }
+        }
+
+        if ($protocol === 'vless') {
+            if (empty($user['id'])) {
+                throw new \RuntimeException('vless client link requires the user "id" (UUID)');
+            }
+            $query['encryption'] = 'none';
+            if (!empty($user['flow'])) {
+                $query['flow'] = (string)$user['flow'];
+            }
+            return ['name' => $name, 'uri' => 'vless://' . $user['id'] . '@' . $host . ':' . $port
+                . '?' . http_build_query($query) . '#' . rawurlencode($name)];
+        }
+
+        if ($protocol === 'vmess') {
+            if (empty($user['id'])) {
+                throw new \RuntimeException('vmess client link requires the user "id" (UUID)');
+            }
+            $json = [
+                'v'    => '2',
+                'ps'   => $name,
+                'add'  => $host,
+                'port' => (string)$port,
+                'id'   => (string)$user['id'],
+                'aid'  => '0',
+                'scy'  => 'auto',
+                'net'  => $net,
+                'type' => 'none',
+                'host' => $inst['srv_host'] ?? '',
+                'path' => $transport === 'grpc'
+                    ? ((($inst['srv_path'] ?? '') !== '') ? $inst['srv_path'] : 'vless')
+                    : ($transport === 'tcp' ? '' : $path),
+                'tls'  => $clientTls === 'none' ? '' : $clientTls,
+                'sni'  => $host,
+            ];
+            return ['name' => $name, 'uri' => 'vmess://' . base64_encode(json_encode($json, JSON_UNESCAPED_SLASHES))];
+        }
+
+        if ($protocol === 'trojan') {
+            if (empty($user['password'])) {
+                throw new \RuntimeException('trojan client link requires the user "password"');
+            }
+            return ['name' => $name, 'uri' => 'trojan://' . rawurlencode((string)$user['password'])
+                . '@' . $host . ':' . $port . '?' . http_build_query($query)
+                . '#' . rawurlencode($name)];
+        }
+
+        if ($protocol === 'shadowsocks') {
+            if (empty($user['password'])) {
+                throw new \RuntimeException('shadowsocks client link requires the user "password"');
+            }
+            $userinfo = self::b64url(self::ssMethod($inst['srv_ss_method'] ?? 'aes-256-gcm') . ':' . $user['password']);
+            return ['name' => $name, 'uri' => 'ss://' . $userinfo . '@' . $host . ':' . $port
+                . '#' . rawurlencode($name)];
+        }
+
+        throw new \RuntimeException("unknown server protocol {$protocol}");
+    }
+
+    /**
+     * v4.1.0: ключи OptionField не могут начинаться с цифры (XML), поэтому
+     * "2022-blake3-*" хранится как "blake3-*" — маппим обратно в метод xray.
+     */
+    private static function ssMethod(string $m): string
+    {
+        if ($m === 'blake3-aes-128-gcm') {
+            return '2022-blake3-aes-128-gcm';
+        }
+        if ($m === 'blake3-aes-256-gcm') {
+            return '2022-blake3-aes-256-gcm';
+        }
+        return $m;
+    }
+
+    /** base64url без паддинга (SIP002 userinfo для ss://) */
+    private static function b64url(string $data): string
+    {
+        return rtrim(strtr(base64_encode($data), ['+' => '-', '/' => '_']), '=');
+    }
+
+    /**
+     * v4.1.0: публичный ключ Reality из приватного (x25519).
+     * Требует ext-sodium (в OPNsense есть); иначе null.
+     */
+    private static function realityPublicKey(string $privateB64): ?string
+    {
+        if (!function_exists('sodium_crypto_scalarmult_base')) {
+            return null;
+        }
+        $raw = base64_decode(strtr($privateB64, ['-' => '+', '_' => '/']), true);
+        if ($raw === false || strlen($raw) !== 32) {
+            return null;
+        }
+        $pub = sodium_crypto_scalarmult_base($raw);
+        return self::b64url($pub);
     }
 
     private static function buildOutbounds(array $proxies, bool $needDnsOut): array

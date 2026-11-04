@@ -541,16 +541,18 @@
             $body.prepend(importHtml);
 
             // Helper buttons near server inbound fields (v4.0.0)
+            // v4.1.0: + список клиентов с QR-кнопками, генерация по протоколу
             var $usersTa = $body.find('[id="instance.srv_users"]');
             $usersTa.closest('td').append(
                 '<div style="margin-top: 6px;">' +
                     '<button type="button" id="dlgAddUserBtn" class="btn btn-sm btn-default">' +
-                        '<i class="fa fa-user-plus"></i> {{ lang._("Add user (generate UUID)") }}' +
+                        '<i class="fa fa-user-plus"></i> {{ lang._("Add user") }}' +
                     '</button> ' +
                     '<button type="button" id="dlgNginxSnippetBtn" class="btn btn-sm btn-default">' +
                         '<i class="fa fa-code"></i> {{ lang._("nginx snippet") }}' +
                     '</button>' +
-                '</div>'
+                '</div>' +
+                '<div id="dlgUsersList" style="margin-top: 6px;"></div>'
             );
 
             // Footer buttons (v4.0.0): Validate Config + Format (raw mode),
@@ -711,14 +713,19 @@
             var srvOn = $('[id="instance.srv_enabled"]').is(':checked');
             var srvTransport = $('[id="instance.srv_transport"]').val() || 'ws';
             var srvSecurity = $('[id="instance.srv_security"]').val() || 'none';
-            var srvFields = ['srv_listen', 'srv_port', 'srv_users', 'srv_transport', 'srv_path',
-                             'srv_security', 'srv_accept_proxy_protocol', 'srv_custom_inbounds',
-                             'srv_default_outbound'];
+            var srvProto = $('[id="instance.srv_protocol"]').val() || 'vless';
+            var srvFields = ['srv_protocol', 'srv_listen', 'srv_port', 'srv_users', 'srv_transport',
+                             'srv_path', 'srv_security', 'srv_accept_proxy_protocol',
+                             'srv_custom_inbounds', 'srv_default_outbound',
+                             'srv_public_host', 'srv_public_port'];
             $.each(srvFields, function (_, f) {
                 $('[id="instance.' + f + '"]').closest('tr').toggle(srvOn);
             });
             $('#dlgAddUserBtn').toggle(srvOn);
             $('#dlgNginxSnippetBtn').toggle(srvOn);
+            // v4.1.0: Shadowsocks-поля — только для shadowsocks
+            $('[id="instance.srv_ss_method"]').closest('tr').toggle(srvOn && srvProto === 'shadowsocks');
+            $('[id="instance.srv_ss_key"]').closest('tr').toggle(srvOn && srvProto === 'shadowsocks');
             $('[id="instance.srv_tls_cert"]').closest('tr').toggle(srvOn && srvSecurity === 'tls');
             $('[id="instance.srv_tls_key"]').closest('tr').toggle(srvOn && srvSecurity === 'tls');
             $('[id="instance.srv_reality_privatekey"]').closest('tr').toggle(srvOn && srvSecurity === 'reality');
@@ -727,6 +734,11 @@
             $('[id="instance.srv_reality_dest"]').closest('tr').toggle(srvOn && srvSecurity === 'reality');
             // path не нужен для tcp
             $('[id="instance.srv_path"]').closest('tr').toggle(srvOn && srvTransport !== 'tcp');
+            // v4.1.0: Host — для ws/h2/xhttp/httpupgrade (не tcp/grpc)
+            $('[id="instance.srv_host"]').closest('tr')
+                .toggle(srvOn && srvTransport !== 'tcp' && srvTransport !== 'grpc');
+            // v4.1.0: список клиентов с QR
+            xrayRenderSrvUsers(srvOn);
         }
 
         $('#DialogInstance').on('shown.bs.modal', function () {
@@ -748,7 +760,8 @@
         $(document).on('change', '[id="instance.node_source"], [id="instance.group"], ' +
             '[id="instance.tun_driver"], [id="instance.tun_auto_routing"], [id="instance.dns_mode"], ' +
             '[id="instance.lb_enabled"], [id="instance.srv_enabled"], [id="instance.srv_transport"], ' +
-            '[id="instance.srv_security"]', xraySyncDialog);
+            '[id="instance.srv_security"], [id="instance.srv_protocol"], [id="instance.srv_ss_method"]',
+            xraySyncDialog);
         $(document).on('ifChanged', '[id="instance.lb_enabled"], [id="instance.srv_enabled"]', xraySyncDialog);
 
         // Import parse handler (inside dialog)
@@ -944,9 +957,32 @@
                 });
         });
 
-        // ── Add user (generate UUID into srv_users) ───────────────────
+        // ── Add user (v4.1.0: генерация по протоколу) ─────────────────
+        function xrayGenUuid() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+                var r = Math.random() * 16 | 0;
+                var v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+        function xrayRandomPass(n) {
+            var chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            var out = '';
+            for (var i = 0; i < n; i++) {
+                out += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return out;
+        }
+        function xrayB64Key(nBytes) {
+            var arr = new Uint8Array(nBytes);
+            (window.crypto || window.msCrypto).getRandomValues(arr);
+            var bin = '';
+            $.each(arr, function (_, b) { bin += String.fromCharCode(b); });
+            return btoa(bin);
+        }
         $(document).on('click', '#dlgAddUserBtn', function () {
             var $ta = $('#DialogInstance').find('[id="instance.srv_users"]');
+            var proto = $('[id="instance.srv_protocol"]').val() || 'vless';
             var list = [];
             var raw = $.trim($ta.val() || '');
             if (raw !== '') {
@@ -961,13 +997,143 @@
                 alert("{{ lang._('Users field must be a JSON array.') }}");
                 return;
             }
-            var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-                var r = Math.random() * 16 | 0;
-                var v = c === 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-            });
-            list.push({id: uuid, email: 'user' + (list.length + 1), flow: ''});
+            var entry = {email: 'user' + (list.length + 1)};
+            if (proto === 'vless' || proto === 'vmess') {
+                entry.id = xrayGenUuid();
+                if (proto === 'vless') {
+                    entry.flow = '';
+                }
+            } else if (proto === 'shadowsocks') {
+                var method = $('[id="instance.srv_ss_method"]').val() || 'aes-256-gcm';
+                entry.password = (method.indexOf('blake3') === 0)
+                    ? xrayB64Key(method.indexOf('256') !== -1 ? 32 : 16)
+                    : xrayRandomPass(16);
+            } else { // trojan
+                entry.password = xrayRandomPass(16);
+            }
+            list.push(entry);
             $ta.val(JSON.stringify(list, null, 4));
+            xrayRenderSrvUsers(true);
+        });
+
+        // ── v4.1.0: список клиентов серверного inbound + QR ──────────
+        function xraySrvUsers() {
+            var raw = $.trim($('[id="instance.srv_users"]').val() || '');
+            if (raw === '') {
+                return [];
+            }
+            try {
+                var list = JSON.parse(raw);
+                return $.isArray(list) ? list : [];
+            } catch (e) {
+                return [];
+            }
+        }
+        function xrayRenderSrvUsers(srvOn) {
+            var $box = $('#dlgUsersList');
+            if (!$box.length) {
+                return;
+            }
+            if (!srvOn) {
+                $box.empty();
+                return;
+            }
+            var proto = $('[id="instance.srv_protocol"]').val() || 'vless';
+            var users = xraySrvUsers();
+            if (!users.length) {
+                $box.html('<span class="text-muted" style="font-size: 12px;">' +
+                    '{{ lang._("No users yet — add one with the button above.") }}</span>');
+                return;
+            }
+            var credName = (proto === 'trojan' || proto === 'shadowsocks') ? 'Password' : 'UUID';
+            var html = '<table class="table table-condensed" style="margin-bottom: 0; background: #fff;">' +
+                '<thead><tr><th>{{ lang._("Email") }}</th><th>' + escAttr(credName) + '</th>' +
+                (proto === 'vless' ? '<th>Flow</th>' : '') +
+                '<th style="width: 70px;"></th></tr></thead><tbody>';
+            $.each(users, function (i, u) {
+                var cred = (proto === 'trojan' || proto === 'shadowsocks')
+                    ? (u.password || '') : (u.id || '');
+                html += '<tr><td>' + escAttr(u.email || ('client' + (i + 1))) + '</td>' +
+                    '<td style="font-family: monospace; font-size: 11px; max-width: 220px; word-break: break-all;">'
+                        + escAttr(cred) + '</td>' +
+                    (proto === 'vless' ? '<td>' + escAttr(u.flow || '') + '</td>' : '') +
+                    '<td style="text-align: right;">' +
+                        '<button type="button" class="btn btn-sm btn-default xray-qr-btn" data-index="' + i + '" ' +
+                        'title="{{ lang._("Show import link / QR") }}">' +
+                        '<i class="fa fa-qrcode"></i> QR</button></td></tr>';
+            });
+            html += '</tbody></table>';
+            $box.html(html);
+        }
+        $(document).on('change', '[id="instance.srv_users"]', function () {
+            xrayRenderSrvUsers(true);
+        });
+
+        // QR: ссылка строится из ПОЛЕЙ ДИАЛОГА (несохранённое состояние тоже работает)
+        $(document).on('click', '.xray-qr-btn', function () {
+            var idx = parseInt($(this).data('index'), 10);
+            var users = xraySrvUsers();
+            var user = users[idx];
+            if (!user) {
+                return;
+            }
+            var fields = {
+                srv_protocol:   $('[id="instance.srv_protocol"]').val() || '',
+                srv_listen:     $('[id="instance.srv_listen"]').val() || '',
+                srv_port:       $('[id="instance.srv_port"]').val() || '',
+                srv_transport:  $('[id="instance.srv_transport"]').val() || '',
+                srv_path:       $('[id="instance.srv_path"]').val() || '',
+                srv_host:       $('[id="instance.srv_host"]').val() || '',
+                srv_security:   $('[id="instance.srv_security"]').val() || '',
+                srv_ss_method:  $('[id="instance.srv_ss_method"]').val() || '',
+                srv_ss_key:     $('[id="instance.srv_ss_key"]').val() || '',
+                srv_public_host: $('[id="instance.srv_public_host"]').val() || '',
+                srv_public_port: $('[id="instance.srv_public_port"]').val() || '',
+                srv_reality_privatekey: $('[id="instance.srv_reality_privatekey"]').val() || '',
+                srv_reality_shortids: $('[id="instance.srv_reality_shortids"]').val() || '',
+                srv_reality_servernames: $('[id="instance.srv_reality_servernames"]').val() || '',
+                srv_reality_dest: $('[id="instance.srv_reality_dest"]').val() || ''
+            };
+            $.ajax({
+                url: '/api/xray/service/clientLink',
+                type: 'POST',
+                contentType: 'application/json; charset=utf-8',
+                data: JSON.stringify({fields: fields, user: user}),
+                dataType: 'json',
+                success: function (data) {
+                    if (data.result !== 'ok') {
+                        alert(data.message || 'link build failed');
+                        return;
+                    }
+                    $('#clientQrTitle').text(data.name || 'Client');
+                    $('#clientQrUri').text(data.uri || '');
+                    try {
+                        var qr = qrcode(0, 'M');
+                        qr.addData(data.uri || '');
+                        qr.make();
+                        $('#clientQrImg').html(qr.createSvgTag({cellSize: 4, margin: 4}));
+                    } catch (e) {
+                        $('#clientQrImg').html('<span class="text-danger" style="font-size: 12px;">' +
+                            '{{ lang._("QR render failed:") }} ' + escAttr(e.message || e) + '</span>');
+                    }
+                    $('#ClientQRModal').modal('show');
+                },
+                error: function (xhr) {
+                    alert("{{ lang._('HTTP error:') }} " + xhr.status);
+                }
+            });
+        });
+        $(document).on('click', '#btnCopyClientLink', function () {
+            var $btn = $(this);
+            var text = $('#clientQrUri').text();
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function () {
+                    $btn.text("{{ lang._('Copied!') }}");
+                    setTimeout(function () { $btn.text("{{ lang._('Copy link') }}"); }, 1500);
+                });
+            } else {
+                alert(text);
+            }
         });
 
         // ── nginx snippet ──────────────────────────────────────────────
@@ -993,6 +1159,21 @@
                 '# TLS terminates on nginx (configure certificates on the server {} level).\n' +
                 '# Other paths can serve a decoy site or return 404.';
 
+            var xhttp =
+                '# nginx http server block (reverse proxy for the XHTTP inbound)\n' +
+                '# listen 443 ssl http2;  — recommended for XHTTP\n' +
+                'location ' + path + ' {\n' +
+                '    proxy_pass http://' + target + ';\n' +
+                '    proxy_http_version 1.1;\n' +
+                '    proxy_set_header Host $host;\n' +
+                '    proxy_set_header X-Real-IP $remote_addr;\n' +
+                '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n' +
+                '    proxy_read_timeout 300s;\n' +
+                '    proxy_send_timeout 300s;\n' +
+                '    proxy_buffering off;\n' +
+                '}\n' +
+                '# TLS terminates on nginx (clients: security=tls, type=xhttp in the link).';
+
             var grpc =
                 '# nginx http server block (gRPC needs HTTP/2 on the listen socket)\n' +
                 'location / {\n' +
@@ -1016,13 +1197,24 @@
                 '# For Reality/xTLS use the stream module or expose Xray directly on WAN.';
 
             $('#nginxSnippetWs').text(ws);
+            $('#nginxSnippetXhttp').text(xhttp);
             $('#nginxSnippetGrpc').text(grpc);
             $('#nginxSnippetStream').text(stream);
         }
 
         $(document).on('click', '#dlgNginxSnippetBtn', function () {
             buildNginxSnippets();
-            $('#nginxSnippetTabs a:first').tab('show');
+            // v4.1.0: открываем вкладку, соответствующую текущему транспорту
+            var t = $('[id="instance.srv_transport"]').val() || 'ws';
+            var tabSel = {
+                ws: 'a[href="#ngsnipWs"]',
+                httpupgrade: 'a[href="#ngsnipWs"]',
+                xhttp: 'a[href="#ngsnipXhttp"]',
+                h2: 'a[href="#ngsnipXhttp"]',
+                grpc: 'a[href="#ngsnipGrpc"]',
+                tcp: 'a[href="#ngsnipStream"]'
+            }[t] || 'a:first';
+            $('#nginxSnippetTabs ' + tabSel).tab('show');
             $('#NginxSnippetModal').modal('show');
         });
 

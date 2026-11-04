@@ -18,7 +18,7 @@
 set -e
 set -u
 
-PLUGIN_VERSION="4.0.7"
+PLUGIN_VERSION="4.1.0"
 PLUGIN_DIR="$(dirname "$0")/plugin"
 VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
 
@@ -56,7 +56,9 @@ if [ "${1:-}" = "uninstall" ]; then
     rm -rf /usr/local/opnsense/www/js/xray
     rm -f /usr/local/opnsense/www/js/xray-codemirror.min.js \
           /usr/local/opnsense/www/js/xray-javascript.min.js \
+          /usr/local/opnsense/www/js/xray-qrcode.min.js \
           /usr/local/opnsense/www/js/xray-codemirror.min.css \
+          /usr/local/opnsense/www/js/xray-QRGEN-LICENSE.txt \
           /usr/local/opnsense/www/js/xray-LICENSE.txt
     # v1.x legacy files
     rm -f /var/run/xray_core.pid /var/run/tun2socks.pid

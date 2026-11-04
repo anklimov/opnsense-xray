@@ -23,7 +23,7 @@
 - **Нативный TUN inbound** (`"protocol": "tun"`) — интерфейс создаёт сам xray-core (схема сверена с `proxy/tun/tun_freebsd.go` в Xray-core 26.10+); tun2socks остаётся per-instance legacy-фолбэком (`tun_driver`). Дефолт нового инстанса: интерфейс `tun100`, шлюз `10.255.0.1/30`.
 - **Маршрутизация движка xray** — новая модель `OPNsense\Xray\RoutingRule` (`//OPNsense/xray/routing_rules`), вкладка **Routing** и API `api/xray/rule/*`: правила по domain / ip / port / sourcePort / network / inboundTag / **geoip** / **geosite** → proxy / balancer / direct / block. `install.sh` скачивает `geoip.dat`/`geosite.dat`; старый `bypass_networks` мигрирует в правило.
 - **Балансировщик + observatory** — `lb_enabled` со стратегиями leastPing / roundRobin / leastLoad / random (все подтверждены по `app/router/config.go`), члены — все серверы выбранной группы либо свой список outbound'ов; билдер генерирует `routing.balancers` + `burstObservatory` + catch-all правило; `fallbackTag` = первый узел — мёртвый узел рвёт соединение, а не сливает трафик напрямую.
-- **Серверный inbound (VLESS)** — движок принимает входящие соединения (WebSocket за nginx, gRPC, h2, TCP/Reality), пользователи через JSON + кнопка генерации UUID, произвольные дополнительные inbound'ы (vmess/trojan/ss/dokodemo), per-instance `srv_default_outbound` и генератор nginx-сниппетов в диалоге.
+- **Серверный inbound** — VLESS/VMess/Trojan/Shadowsocks (включая SS-2022), транспорты WebSocket/XHTTP/gRPC/H2/HTTPUpgrade/TCP, security none (TLS на nginx)/TLS/REALITY; генерация креденшалов по протоколу и **QR + ссылка импорта** на каждого клиента; генератор nginx-сниппетов (вкладка выбирается по транспорту)
 - **Режим Raw JSON** — `node_source` расширен до `config | group | none | raw`: полный `config.json` в редакторе CodeMirror с кнопками **Validate Config** (черновик, через `xray -test`), **Format** и **Preview Generated Config**.
 - **ConfigBuilder** (`mvc/app/library/OPNsense/Xray/ConfigBuilder.php`) — единственный источник генерации конфига для start/reconfigure/validate/preview; сборка конфига больше не дублируется в сервисном скрипте. Строгие ошибки конфигурации (конфликт портов, имя `tunN`, action=balancer без LB и т.п.).
 - **Опция полного туннеля** — `tun_auto_routing = full`: xray сам управляет системными маршрутами (`autoSystemRoutingTable`, escape FIB через `autoOutboundsInterface`, опционально `autoSystemDnsToGateway`); требует `net.fibs=2`, значение показывается в Diagnostics.
@@ -41,7 +41,7 @@
 - **Нативный TUN inbound** — TUN-интерфейс создаёт сам xray-core (`"protocol": "tun"`), внешние демоны не нужны; tun2socks остаётся per-instance legacy-фолбэком
 - **Маршрутизация движка xray** — per-instance правила по доменам / IP / портам / sourcePort / network / inboundTag / **GeoIP** / **GeoSite** (dat-файлы ставятся автоматически); кнопка **Preview Generated Config** показывает результат
 - **Балансировка и health-checks** — balancer со стратегиями leastPing / roundRobin / leastLoad / random и фоновым `burstObservatory`, пробирующим каждый узел; члены — все серверы группы либо свой список outbound'ов
-- **Серверный inbound (VLESS)** — приём входящих прокси-соединений (WebSocket за nginx, gRPC, h2, TCP/Reality напрямую); генератор nginx-сниппетов в диалоге; дополнительные inbound'ы (vmess/trojan/ss/dokodemo) через JSON-список
+- **Серверный inbound** — приём входящих прокси-соединений: VLESS/VMess/Trojan/SS поверх WebSocket/XHTTP/gRPC/H2/HTTPUpgrade/TCP с none/TLS/REALITY; QR + ссылки на клиента; дополнительные inbound'ы через JSON-список
 - **Режим Raw JSON** — полный `config.json` в редакторе CodeMirror с подсветкой синтаксиса, кнопками **Validate Config** (черновик, через `xray -test`) и **Format**; в wizard-режиме всё генерируется из полей GUI
 - **Переключатель Config Source** — group / свой JSON / только сервер / raw; в диалоге показаны только поля выбранного режима
 - **Группы серверов и импорт подписки** — список `vless://` ссылок импортируется как группа, активный узел выбирается в дропдауне, кнопка **Refresh** перескачивает список по требованию
@@ -230,18 +230,23 @@ MSS Clamping для Xray не требуется (в отличие от WireGua
 
 ---
 
-## Серверный inbound (входящий VLESS за nginx)
+## Серверный inbound (входящий прокси за nginx)
 
-Движок может и принимать соединения — роутер становится точкой входа прокси. Включи **Incoming VLESS** в диалоге инстанса:
+Движок может и принимать соединения — роутер становится точкой входа прокси. Включи **Server Inbound** в диалоге инстанса:
 
-1. **Users (JSON)** — кнопка **Add user** добавляет сгенерированный UUID, например `[{"id":"…","email":"user1","flow":""}]`
-2. **Transport** — `WebSocket` (за nginx), `gRPC`, `HTTP/2` или `TCP`; задай path/service name
-3. **Security** — `None` (TLS терминирует nginx), `TLS` (свои файлы сертификатов) или `Reality` (прямое exposure, только TCP)
-4. Кнопка **nginx snippet** — готовый конфиг под текущие настройки (вкладки WS / gRPC / stream) для вставки в плагин nginx (Services → Nginx) или custom include
-5. Открой публичный порт в **Firewall → Rules** (WAN) при прямом exposure
-6. **Incoming Traffic Default** — куда идёт трафик клиентов без совпадения правил: `direct`, `proxy` (цепочка через upstream) или `balancer`; per-domain — правилом по `inboundTag: vless-in`
+1. **Protocol** — `VLESS` (рекомендуется: flow/REALITY), `VMess`, `Trojan` или `Shadowsocks` (включая 2022-blake3 с серверным ключом)
+2. **Users** — кнопка **Add user** генерирует подходящий креденшал под выбранный протокол (UUID для VLESS/VMess, случайный пароль для Trojan/Shadowsocks, base64-ключ для SS-2022). У каждого клиента — кнопка **QR**: модалка с ссылкой импорта (`vless://`, `vmess://`, `trojan://`, `ss://`) и QR-кодом для сканирования в v2rayNG/Nekoray/Streisand; строится из текущего состояния диалога, сохранять не надо
+3. **Transport** — `WebSocket`, `XHTTP`, `gRPC`, `HTTP/2`, `HTTPUpgrade` (все за nginx) или `TCP` (напрямую); задай path/service name и Host header
+4. **Security** — `None` (TLS терминирует nginx), `TLS` (свои файлы сертификатов) или `Reality` (напрямую; TCP/gRPC/XHTTP)
+5. **Public Host / Public Port (links/QR)** — куда подключаются клиенты (домен + 443 за nginx; WAN-IP + Listen Port напрямую). Используются генератором QR/ссылок
+6. Кнопка **nginx snippet** — готовый конфиг под текущие настройки (вкладки WS / XHTTP / gRPC / stream, активная выбирается по транспорту) для вставки в плагин nginx (Services → Nginx) или custom include
+7. Открой публичный порт в **Firewall → Rules** (WAN) при прямом exposure
+8. **Incoming Traffic Default** — куда идёт трафик клиентов без совпадения правил: `direct`, `proxy` (цепочка через upstream) или `balancer`; per-domain — правилом по `inboundTag: vless-in` (тег исторический, используется для всех протоколов)
 
-Ссылка для клиента: `vless://<uuid>@<твой-хост>:443?security=tls&type=ws&path=/vless#my-opnsense` (при TLS на nginx:443).
+Пример ссылки клиента (VLESS за nginx, TLS на 443):
+`vless://<uuid>@<твой-хост>:443?security=tls&sni=<твой-хост>&fp=chrome&type=xhttp&path=/vless#my-opnsense`
+
+Генератор QR выводит публичный ключ Reality из приватного на стороне сервера (libsodium x25519) — ссылки Reality получают готовый `pbk=`.
 
 ---
 
