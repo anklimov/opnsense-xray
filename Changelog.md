@@ -5,6 +5,13 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.0.3] — 2026-11-04 (fork)
+
+### Fixed
+- **Syshook ждал несуществующий `proxytun2socks0` 15 секунд на raw-инстансе без `"name"` у tun-inbound.** `extractRuntimeFields` возвращает пустой `tun_iface`, но `${TUN_IFACE:-proxytun2socks0}` в sh подставляет дефолт и для ПУСТОГО значения — осознанный «нет TUN» превращался в ожидание фантомного интерфейса. Дефолты заменены на форму без двоеточия (`${VAR-default}`): подстановка только если переменная вовсе не установлена (eval не удался). Пустое имя → syshook сразу пропускает TUN-этап с подсказкой добавить `"name": "tunN"` в settings tun-inbound
+
+---
+
 ## [4.0.2] — 2026-11-04 (fork)
 
 ### Fixed

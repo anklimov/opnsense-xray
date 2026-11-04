@@ -66,15 +66,20 @@ setup_instance() {
     ' 2>>"$LOG")
 
     eval "$_INST_INFO"
-    TUN_IFACE="${TUN_IFACE:-proxytun2socks0}"
-    MTU="${MTU:-1500}"
-    DRIVER="${DRIVER:-tun2socks}"
+    # v4.0.3: '${VAR:-x}' подставляет дефолт и для ПУСТОГО значения — а
+    # extractRuntimeFields возвращает пустой tun_iface для raw-конфига без
+    # "name" у tun-inbound, из-за чего syshook ждал proxytun2socks0 15 секунд.
+    # Дефолт — только если переменная вовсе не установлена (eval не удался).
+    TUN_IFACE="${TUN_IFACE-proxytun2socks0}"
+    MTU="${MTU-1500}"
+    DRIVER="${DRIVER-tun2socks}"
 
     echo "[${_INST_UUID}] tun=[$TUN_IFACE] mtu=[$MTU] driver=[$DRIVER]"
 
     # v4.0.1: raw-конфиг без tun-inbound (или без "name") — ждать нечего
     if [ -z "$TUN_IFACE" ]; then
-        echo "[${_INST_UUID}] no TUN interface name defined — skipping TUN setup"
+        echo "[${_INST_UUID}] raw config has no tun inbound (or no \"name\" in it) — skipping TUN setup"
+        echo "[${_INST_UUID}] hint: add \"name\": \"tunN\" to the tun inbound settings to have this hook track the interface"
         return 0
     fi
 
