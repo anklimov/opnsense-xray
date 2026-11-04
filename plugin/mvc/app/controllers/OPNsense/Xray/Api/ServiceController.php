@@ -224,6 +224,17 @@ class ServiceController extends ApiMutableServiceControllerBase
 
         $ok = stripos($output, 'OK')    !== false
            && stripos($output, 'ERROR') === false;
+
+        // v4.0.4: ловушки raw-конфига, которые xray -test не ловит (он не
+        // стартует inbound'ы): несуществующий listen-адрес, имя tun не tunN
+        if ($ok) {
+            $warnings = \OPNsense\Xray\ConfigBuilder::rawConfigIssues($draft);
+            if ($warnings) {
+                $output .= "\n\nWARNING: xray -test passed, but the config will fail at start:\n"
+                    . implode("\n", $warnings);
+            }
+        }
+
         return [
             'result'  => $ok ? 'ok' : 'failed',
             'message' => $output ?: 'No response from configd',

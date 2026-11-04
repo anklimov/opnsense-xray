@@ -225,7 +225,8 @@ A node that disappears from the subscription stays in the group flagged `stale`;
 - **Validate Config** — the draft is checked by `xray -test` on the router (not the saved config!); GeoIP/GeoSite rules are checked against the dat files installed by `install.sh`
 - **Format** — pretty-print
 - **No contradictory GUI fields**: in this mode the TUN/SOCKS/DNS/LB/server sections of the dialog are hidden, and the runtime parameters are derived from the JSON itself — the TUN interface name and MTU from the `tun` inbound, the SOCKS address/port (Test button, legacy tun2socks driver) from the `socks`/`mixed` inbound
-- Notes: with the tun2socks legacy driver the config must contain a SOCKS/mixed inbound; the plugin's routing rules / balancer sections do not apply (they are wizard-only). On FreeBSD a native `tun` inbound needs `"name": "tunN"` (and the current `gateway` schema — the old `address` field is ignored)
+- **Validate Config** also warns about traps that `xray -test` cannot catch (it does not start inbounds): a `listen` address that is not assigned to any router interface (xray would die at start with "bind: can't assign requested address" — typical for configs copied from another machine), or a tun interface name that is not `tunN` (macOS-style `utunN`)
+- Notes: with the tun2socks legacy driver the config must contain a SOCKS/mixed inbound; the plugin's routing rules / balancer sections do not apply (they are wizard-only). On FreeBSD a native `tun` inbound needs `"name": "tunN"` (utunN is macOS-only) and the current `gateway` schema — the old `address` field is ignored
 
 ---
 

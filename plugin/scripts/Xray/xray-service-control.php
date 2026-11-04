@@ -440,6 +440,15 @@ function do_start(array $c): bool
             return false;
         }
 
+        // v4.0.4: ловушки raw-конфига, которые xray -test не ловит (он не
+        // стартует inbound'ы): несуществующий listen-адрес убивает xray
+        // на первом же inbound'е с "bind: can't assign requested address"
+        if (($c['node_source'] ?? '') === 'raw' && $driver === 'xray') {
+            foreach (ConfigBuilder::rawConfigIssues((string)($c['full_config'] ?? '')) as $warn) {
+                echo "WARNING: {$warn}\n";
+            }
+        }
+
         $instLog = xray_instance_log($inst_uuid);
         if (!proc_is_running(xray_pid_path($inst_uuid))) {
             // v4.0.1: XRAY_LOCATION_ASSET — geoip.dat/geosite.dat ищутся

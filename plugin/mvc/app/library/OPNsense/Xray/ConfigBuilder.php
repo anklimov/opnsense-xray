@@ -251,6 +251,88 @@ class ConfigBuilder
     }
 
     /**
+     * v4.0.4: статические проверки raw-конфига — то, что xray -test НЕ
+     * сообщает (он не стартует inbound'ы, а умирает на первом же):
+     *  - listen-адрес inbound'а не назначен ни одному интерфейсу роутера —
+     *    xray падает на старте с «bind: can't assign requested address»
+     *    (EADDRNOTAVAIL; типовой случай — конфиг, скопированный с другой
+     *    машины, где этот IP был локальным);
+     *  - имя tun-интерфейса не по документированной для FreeBSD схеме tunN
+     *    (utunN — macOS-only; syshook ждёт именно имя из конфига).
+     * Про "mtu" предупреждать не нужно: xray сам подставляет 1500
+     * (infra/conf/tun.go v26.10.31). $localIps — для тестов; по умолчанию
+     * собирается из ifconfig -a. Возвращает массив предупреждений.
+     */
+    public static function rawConfigIssues(string $json, ?array $localIps = null): array
+    {
+        $issues = [];
+        $config = json_decode(self::stripJsonComments($json), true);
+        if (!is_array($config)) {
+            return $issues;
+        }
+        if ($localIps === null) {
+            $localIps = self::systemIpAddresses();
+        }
+        $localIps = array_fill_keys($localIps, true);
+
+        foreach (($config['inbounds'] ?? []) as $ib) {
+            if (!is_array($ib)) {
+                continue;
+            }
+            $proto = (string)($ib['protocol'] ?? '');
+            $tag   = (string)($ib['tag'] ?? '');
+
+            if ($proto === 'tun') {
+                $settings = is_array($ib['settings'] ?? null) ? $ib['settings'] : [];
+                $name     = (string)($settings['name'] ?? '');
+                if ($name !== '' && !preg_match('/^tun\d+$/', $name)) {
+                    $issues[] = 'tun inbound "' . $name . '": interface name is not tunN — '
+                        . 'on FreeBSD the documented scheme is "tunN" (e.g. tun5); utunN is macOS-only';
+                }
+                continue; // tun не слушает сокеты
+            }
+
+            // v4.0.4: listen-адрес должен существовать на интерфейсах роутера
+            $listen = trim((string)($ib['listen'] ?? ''));
+            if ($listen === '' || $listen === '0.0.0.0' || $listen === '::') {
+                continue;
+            }
+            if (!filter_var($listen, FILTER_VALIDATE_IP)) {
+                continue; // hostname — xray резолвит сам, не проверяем
+            }
+            if (strpos($listen, '127.') === 0 || $listen === '::1') {
+                continue; // 127.x плагин вешает на lo0 (lo0_alias_ensure)
+            }
+            if (!isset($localIps[strtolower($listen)])) {
+                $issues[] = 'inbound "' . ($tag !== '' ? $tag : $proto) . '": listen address ' . $listen
+                    . ' is not assigned to any interface on this router — xray will fail to start '
+                    . 'with "bind: can\'t assign requested address"; use the router\'s LAN IP, '
+                    . '"0.0.0.0" or "127.0.0.1"';
+            }
+        }
+        return $issues;
+    }
+
+    /**
+     * v4.0.4: все IPv4/IPv6-адреса интерфейсов системы (ifconfig -a).
+     * Если выполнить не удалось — пустой массив (проверка listen деградирует).
+     */
+    private static function systemIpAddresses(): array
+    {
+        $out = [];
+        exec('/sbin/ifconfig -a 2>/dev/null', $lines, $rc);
+        if ($rc !== 0) {
+            return [];
+        }
+        foreach ((array)$lines as $line) {
+            if (preg_match('/\binet6?\s+([0-9a-fA-F:.]+)/', $line, $m)) {
+                $out[] = strtolower(explode('%', $m[1])[0]);
+            }
+        }
+        return array_values(array_unique($out));
+    }
+
+    /**
      * v4.0.1: вырезает комментарии в стиле xray-core (infra/conf/json/reader.go):
      * строчные `//` и `#`, блочные "slash-star ... star-slash". Внутри строк
      * (в т.ч. "https://...") символы не трогаются. json_decode комментарии

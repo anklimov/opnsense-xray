@@ -57,6 +57,13 @@ setup_instance() {
                 echo "TUN_IFACE=" . $c["tun_iface"]  . "\n";
                 echo "MTU="       . $c["mtu"]        . "\n";
                 echo "DRIVER="    . $c["tun_driver"] . "\n";
+                // v4.0.4: ловушки raw-конфига (xray -test их не ловит) —
+                // escapeshellarg, т.к. _INST_INFO исполняется через eval
+                $issues = [];
+                if (($c["node_source"] ?? "") === "raw") {
+                    $issues = OPNsense\Xray\ConfigBuilder::rawConfigIssues((string)($c["full_config"] ?? ""));
+                }
+                echo "TUN_WARN=" . escapeshellarg($issues[0] ?? "") . "\n";
                 exit(0);
             }
         }
@@ -81,6 +88,11 @@ setup_instance() {
         echo "[${_INST_UUID}] raw config has no tun inbound (or no \"name\" in it) — skipping TUN setup"
         echo "[${_INST_UUID}] hint: add \"name\": \"tunN\" to the tun inbound settings to have this hook track the interface"
         return 0
+    fi
+
+    # v4.0.4: предупреждение о ловушке raw-конфига (xray, скорее всего, умер)
+    if [ -n "${TUN_WARN-}" ]; then
+        echo "[${_INST_UUID}] WARNING: $TUN_WARN"
     fi
 
     # Ждём TUN интерфейс до 15 секунд (xray создаёт его сам при старте)

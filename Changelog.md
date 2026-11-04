@@ -5,6 +5,18 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.0.4] — 2026-11-04 (fork)
+
+### Added
+- **`ConfigBuilder::rawConfigIssues()`: предупреждения о ловушках raw-конфига, которые `xray -test` не ловит** (он не стартует inbound'ы, а xray умирает на первом же):
+  - **listen-адрес inbound'а не назначен ни одному интерфейсу роутера** — xray падает на старте с `bind: can't assign requested address` (EADDRNOTAVAIL). Типовой случай: конфиг, скопированный с другой машины, где этот IP был локальным (найдено на живом кейсе: `in_mixed` слушал 192.168.88.2 — IP старого роутера; xray умирал до tun-inbound, syshook 15 секунд ждал интерфейс, watchdog ретраил каждую минуту)
+  - имя tun-интерфейса не по документированной для FreeBSD схеме `tunN` (utunN — macOS-only)
+  - про отсутствие `"mtu"` предупреждения нет: xray сам подставляет 1500 (infra/conf/tun.go, проверено в v26.10.31)
+  - адреса берутся из `ifconfig -a` (белый список: `0.0.0.0`/`::`, loopback — плагин сам вешает 127.x на lo0, hostname не проверяется)
+- Предупреждения выводятся в **Validate Config** («xray -test passed, but the config will fail at start»), в вывод **start**-действия и в лог syshook (`TUN_WARN`, escapeshellarg — значение исполняется через sh eval)
+
+---
+
 ## [4.0.3] — 2026-11-04 (fork)
 
 ### Fixed

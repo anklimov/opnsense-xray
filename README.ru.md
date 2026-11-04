@@ -225,7 +225,8 @@ MSS Clamping для Xray не требуется (в отличие от WireGua
 - **Validate Config** — черновик проверяется через `xray -test` на роутере (именно текст из редактора, а не сохранённый конфиг!); правила GeoIP/GeoSite проверяются по dat-файлам, которые ставит `install.sh`
 - **Format** — pretty-print
 - **Противоречивых GUI-полей нет**: в этом режиме секции TUN/SOCKS/DNS/LB/Server Inbound диалога скрыты, а runtime-параметры выводятся из самого JSON — имя TUN-интерфейса и MTU из inbound'а `tun`, адрес/порт SOCKS (кнопка Test, legacy-драйвер tun2socks) из inbound'а `socks`/`mixed`
-- Нюансы: при legacy-драйвере tun2socks конфиг обязан содержать SOCKS/mixed-inbound; правила маршрутизации / секции балансировщика на raw-режим не действуют (это возможности wizard'а). На FreeBSD нативному `tun`-inbound нужен `"name": "tunN"` и актуальная схема `gateway` — старое поле `address` игнорируется
+- **Validate Config** также предупреждает о ловушках, которые `xray -test` не ловит (он не стартует inbound'ы): `listen`-адрес, не назначенный ни одному интерфейсу роутера (xray умрёт на старте с «bind: can't assign requested address» — типично для конфигов, скопированных с другой машины), или имя tun-интерфейса не `tunN` (macOS-стиль `utunN`)
+- Нюансы: при legacy-драйвере tun2socks конфиг обязан содержать SOCKS/mixed-inbound; правила маршрутизации / секции балансировщика на raw-режим не действуют (это возможности wizard'а). На FreeBSD нативному `tun`-inbound нужен `"name": "tunN"` (utunN — только macOS) и актуальная схема `gateway` — старое поле `address` игнорируется
 
 ---
 
