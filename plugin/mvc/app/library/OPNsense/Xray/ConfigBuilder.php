@@ -286,8 +286,11 @@ class ConfigBuilder
                 $settings = is_array($ib['settings'] ?? null) ? $ib['settings'] : [];
                 $name     = (string)($settings['name'] ?? '');
                 if ($name !== '' && !preg_match('/^tun\d+$/', $name)) {
-                    $issues[] = 'tun inbound "' . $name . '": interface name is not tunN — '
-                        . 'on FreeBSD the documented scheme is "tunN" (e.g. tun5); utunN is macOS-only';
+                    $issues[] = 'tun inbound "' . $name . '": interface name is not tunN (the documented '
+                        . 'FreeBSD scheme; utunN is macOS-only). Note: OPNsense hides tunN/tapX-style names '
+                        . 'from Interfaces → Assignments (interfaces_virtual_patterns) — if you want to assign '
+                        . 'the interface in the GUI, use a name outside those patterns (e.g. "xraytun0"), '
+                        . 'or let xray manage routing itself via autoSystemRoutingTable';
                 }
                 continue; // tun не слушает сокеты
             }
@@ -591,10 +594,16 @@ class ConfigBuilder
         }
 
         if ($inst['tun_driver'] === 'xray') {
-            if (!preg_match('/^tun\d+$/', $inst['tun_iface'])) {
+            // v4.0.5: xray на FreeBSD создаёт интерфейс переименованием клона
+            // /dev/tun — имя может быть любым валильным (tun2socks годами
+            // создавал "proxytun2socks0"). Кроме того, OPNsense СКРЫВАЕТ имена
+            // вида tunN/tapX из Interfaces → Assignments, так что не-tunN имя
+            // (например xraytun0) — единственный способ назначить интерфейс
+            // в GUI. Оставляем проверку только на валидность имени.
+            if (!preg_match('/^[a-z][a-z0-9]{0,13}[0-9]$/', (string)$inst['tun_iface'])) {
                 throw new \RuntimeException(
-                    'FreeBSD requires the TUN interface name to match "tunN" for the native xray TUN driver (got "'
-                    . $inst['tun_iface'] . '")'
+                    'invalid TUN interface name "' . $inst['tun_iface'] . '": must be 2-15 chars, '
+                    . 'lowercase letters/digits, starting with a letter and ending with a digit (e.g. tun100, xraytun0)'
                 );
             }
             $settings = [

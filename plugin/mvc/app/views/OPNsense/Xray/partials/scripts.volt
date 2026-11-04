@@ -873,30 +873,45 @@
                     .text("{{ lang._('Save the instance first.') }}");
                 return;
             }
-            $res.removeClass('text-success text-danger').text("{{ lang._('Building...') }}");
 
-            $.ajax({
-                url:  '/api/xray/service/previewConfig/' + encodeURIComponent(uuid),
-                type: 'POST',
-                dataType: 'json',
-                success: function (data) {
-                    $btn.prop('disabled', false);
-                    if (data.result !== 'ok') {
+            var buildPreview = function () {
+                $res.removeClass('text-success text-danger').text("{{ lang._('Building...') }}");
+                $.ajax({
+                    url:  '/api/xray/service/previewConfig/' + encodeURIComponent(uuid),
+                    type: 'POST',
+                    dataType: 'json',
+                    success: function (data) {
+                        $btn.prop('disabled', false);
+                        if (data.result !== 'ok') {
+                            $res.removeClass('text-success').addClass('text-danger')
+                                .text(data.message || 'build failed');
+                            return;
+                        }
+                        $res.removeClass('text-danger').addClass('text-success')
+                            .text("{{ lang._('OK') }}");
+                        $('#configPreviewPre').text(data.config || '');
+                        $('#ConfigPreviewModal').modal('show');
+                    },
+                    error: function (xhr) {
+                        $btn.prop('disabled', false);
                         $res.removeClass('text-success').addClass('text-danger')
-                            .text(data.message || 'build failed');
-                        return;
+                            .text("{{ lang._('HTTP error:') }} " + xhr.status);
                     }
-                    $res.removeClass('text-danger').addClass('text-success')
-                        .text("{{ lang._('OK') }}");
-                    $('#configPreviewPre').text(data.config || '');
-                    $('#ConfigPreviewModal').modal('show');
-                },
-                error: function (xhr) {
+                });
+            };
+
+            // v4.0.5: молча сохраняем форму (тот же механизм, что у Save, но
+            // диалог не закрывается) — превью всегда отражает правки в диалоге
+            $res.removeClass('text-success text-danger').text("{{ lang._('Saving...') }}");
+            if (typeof rawCm !== 'undefined' && rawCm) { rawCm.save(); }
+            saveFormToEndpoint('/api/xray/instance/setItem/' + encodeURIComponent(uuid), 'frm_DialogInstance',
+                function () { buildPreview(); },
+                true,
+                function () {
                     $btn.prop('disabled', false);
                     $res.removeClass('text-success').addClass('text-danger')
-                        .text("{{ lang._('HTTP error:') }} " + xhr.status);
-                }
-            });
+                        .text("{{ lang._('Validation failed — fix the highlighted fields.') }}");
+                });
         });
 
         // ── Add user (generate UUID into srv_users) ───────────────────

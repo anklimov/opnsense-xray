@@ -61,13 +61,13 @@
         <label>TUN Driver</label>
         <type>dropdown</type>
         <style>selectpicker</style>
-        <help>"Xray TUN inbound (native)" — the TUN interface is created by xray-core itself (protocol "tun", requires xray-core 26.10+; on FreeBSD the interface name must be tunN). "tun2socks (legacy)" — the external tun2socks daemon forwarding the TUN to the SOCKS inbound. In Raw JSON mode the TUN details come from your config: native driver expects a "tun" inbound inside it, legacy expects a SOCKS/mixed inbound to forward to.</help>
+        <help>"Xray TUN inbound (native)" — the TUN interface is created by xray-core itself (protocol "tun", requires xray-core 26.10+; on FreeBSD any valid lowercase name ending with a digit works (tun100, xraytun0); OPNsense hides tunN from Interfaces → Assignments, so a name like xraytun0 is required for GUI assignment). "tun2socks (legacy)" — the external tun2socks daemon forwarding the TUN to the SOCKS inbound. In Raw JSON mode the TUN details come from your config: native driver expects a "tun" inbound inside it, legacy expects a SOCKS/mixed inbound to forward to.</help>
     </field>
     <field>
         <id>instance.tun_interface</id>
         <label>TUN Interface</label>
         <type>text</type>
-        <help>TUN interface name. Native driver on FreeBSD: must match tunN, e.g. tun100. Must match the name in Interfaces → Assignments.</help>
+        <help>TUN interface name for the native driver, e.g. tun100 or xraytun0 (lowercase letters/digits, ends with a digit, up to 15 chars). Note: OPNsense hides tunN/tapX-style names from Interfaces → Assignments — use a name like xraytun0 if you want to assign the interface in the GUI.</help>
         <hint>tun100</hint>
     </field>
     <field>

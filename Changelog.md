@@ -5,6 +5,15 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.0.5] — 2026-11-04 (fork)
+
+### Fixed
+- **«No response from configd» вместо текста ошибки от Validate Config (и start/restart/reconfigure/validate/generate/testconnect).** configd исполняет действия script_output с `check=True`: ненулевой exit код скрипта → `CalledProcessError` → configd возвращает `Execute error`, который Backend превращает в пустой ответ. Скрипт же при невалидном черновике печатал `ERROR: ...` И выходил с кодом 1 — текст проглатывался. Добавлен `errors:no` в 7 действий actions_xray.conf (`check=False`: вывод доезжает до GUI, exit-коды сохраняются для CLI и watchdog)
+- **Preview Generated Config: «Save the instance first» на каждую правку.** Кнопка требовала предварительно сохранённый инстанс, а Save закрывал диалог — превью несохранённых правок было невозможно. Теперь Preview молча сохраняет форму штатным `saveFormToEndpoint` (диалог остаётся открытым, валидация полей работает как у Save) и строит превью из только что сохранённого состояния
+- **Встроенный (wizard) TUN отвергал имя не-tunN.** `buildInbounds()` требовал `^tun\d+$`, хотя xray на FreeBSD создаёт интерфейс переименованием клона /dev/tun и принимает любые валидные имена (tun2socks годами создавал `proxytun2socks0`). Хуже: имена tunN OPNsense скрывает из Interfaces → Assignments — то есть строгое правило делало встроенный TUN принципиально неназначаемым в GUI. Теперь проверяется только валидность имени (строчная буква/цифры, последняя — цифра, ≤15 символов); help-тексты формы обновлены
+
+---
+
 ## [4.0.4] — 2026-11-04 (fork)
 
 ### Added
@@ -12,6 +21,7 @@ Format: [Semantic Versioning](https://semver.org/).
   - **listen-адрес inbound'а не назначен ни одному интерфейсу роутера** — xray падает на старте с `bind: can't assign requested address` (EADDRNOTAVAIL). Типовой случай: конфиг, скопированный с другой машины, где этот IP был локальным (найдено на живом кейсе: `in_mixed` слушал 192.168.88.2 — IP старого роутера; xray умирал до tun-inbound, syshook 15 секунд ждал интерфейс, watchdog ретраил каждую минуту)
   - имя tun-интерфейса не по документированной для FreeBSD схеме `tunN` (utunN — macOS-only)
   - про отсутствие `"mtu"` предупреждения нет: xray сам подставляет 1500 (infra/conf/tun.go, проверено в v26.10.31)
+  - предупреждение о схеме имени tunN снабжено подсказкой: OPNsense скрывает имена вида tunN/tapX из Interfaces → Assignments (`interfaces_virtual_patterns` в interfaces.lib.inc — потому старый `proxytun2socks0` в GUI был виден, а `tun5` — нет); для назначения в GUI имя должно не попадать под виртуальные паттерны (например, `xraytun0`), либо пусть маршрутизацией управляет сам xray (`autoSystemRoutingTable`)
   - адреса берутся из `ifconfig -a` (белый список: `0.0.0.0`/`::`, loopback — плагин сам вешает 127.x на lo0, hostname не проверяется)
 - Предупреждения выводятся в **Validate Config** («xray -test passed, but the config will fail at start»), в вывод **start**-действия и в лог syshook (`TUN_WARN`, escapeshellarg — значение исполняется через sh eval)
 
