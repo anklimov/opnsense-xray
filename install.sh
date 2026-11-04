@@ -18,7 +18,7 @@
 set -e
 set -u
 
-PLUGIN_VERSION="4.0.1"
+PLUGIN_VERSION="4.0.2"
 PLUGIN_DIR="$(dirname "$0")/plugin"
 VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
 
@@ -401,6 +401,12 @@ install_tree() {
         warn "install_tree: source directory not found: $_src"
         return 1
     fi
+
+    # v4.0.2: целевой каталог создаём всегда — у ПЛОСКОГО источника
+    # (web/js/xray: только файлы, без сабдиректорий) цикл -type d ничего
+    # не создаёт, install в несуществующий каталог падает, а set -e
+    # ронял установку до записи version.txt и перезапуска configd
+    install -d "$_dst"
 
     find "$_src" -mindepth 1 -type d | while IFS= read -r _dir; do
         _rel="${_dir#$_src}"

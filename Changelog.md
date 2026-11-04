@@ -5,7 +5,14 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [4.0.1] — 2026-11-04 (fork)
+## [4.0.2] — 2026-11-04 (fork)
+
+### Fixed
+- **Установка падала на web-ассетах и оставляла систему в нерабочем виде.** `install_tree` не создавал целевой каталог для ПЛОСКОГО источника (`web/js/xray` — только файлы, без сабдиректорий): `install: /usr/local/opnsense/www/js/xray: No such file or directory`, после чего `set -e` ронял скрипт — version.txt не записывался, configd не перезапускался (симптом: «Action not allowed or missing» на всех действиях UI, «Invalid JSON from ifstats»). Теперь `install -d "$_dst"` выполняется всегда. Воспроизведено и проверено в песочнице: без фикса — exit 71 на web-ассетах, с фиксом — установка проходит целиком
+
+---
+
+## [4.0.1] — 2026-11-04 (fork) — 2026-11-04 (fork)
 
 ### Fixed
 - **Raw-конфиги с комментариями отвергались валидацией.** xray-core принимает комментарии в config.json (`//`, `#`, блочные — `infra/conf/json/reader.go`), а `json_decode` нет: валидный для xray конфиг падал с «Invalid JSON» и в кнопке Validate Config, и при старте (`buildRaw`). Добавлен `ConfigBuilder::stripJsonComments()` — порт xray-ридера (с учётом кавычек и escape: `https://…` не режется); strip выполняется перед decode, в `xray -test` уходит оригинальный черновик
