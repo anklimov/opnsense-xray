@@ -18,7 +18,7 @@
 set -e
 set -u
 
-PLUGIN_VERSION="4.0.6"
+PLUGIN_VERSION="4.0.7"
 PLUGIN_DIR="$(dirname "$0")/plugin"
 VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
 
@@ -54,6 +54,10 @@ if [ "${1:-}" = "uninstall" ]; then
     # v4.0.0: geo data and web assets
     rm -f /usr/local/etc/xray-core/geoip.dat /usr/local/etc/xray-core/geosite.dat
     rm -rf /usr/local/opnsense/www/js/xray
+    rm -f /usr/local/opnsense/www/js/xray-codemirror.min.js \
+          /usr/local/opnsense/www/js/xray-javascript.min.js \
+          /usr/local/opnsense/www/js/xray-codemirror.min.css \
+          /usr/local/opnsense/www/js/xray-LICENSE.txt
     # v1.x legacy files
     rm -f /var/run/xray_core.pid /var/run/tun2socks.pid
     rm -f /var/run/xray_start.lock /var/run/xray_stopped.flag
@@ -653,11 +657,20 @@ install -d -m 0750 /usr/local/etc/xray-core
 install -d -m 0750 /usr/local/tun2socks
 
 # v4.0.0: web-ассеты (CodeMirror для редактора Raw JSON)
+# v4.0.7: nginx OPNsense не отдаёт ПОДКАТАЛОГИ в /js/ (location-регекс
+# допускает одно звено) — /js/xray/* возвращал HTML и браузер блокировал
+# загрузку. Ставим ПЛОСКО с уникальным префиксом xray-*.
 install -d /usr/local/opnsense/www/js
-if [ -d "$PLUGIN_DIR/web/js/xray" ]; then
-    install_tree "$PLUGIN_DIR/web/js/xray" \
-                 "/usr/local/opnsense/www/js/xray" 0644
-fi
+for _asset in "$PLUGIN_DIR"/web/js/xray/*; do
+    [ -f "$_asset" ] || continue
+    _base=$(basename "$_asset")
+    case "$_base" in
+        xray-*) install -m 0644 "$_asset" "/usr/local/opnsense/www/js/$_base" ;;
+        *)      install -m 0644 "$_asset" "/usr/local/opnsense/www/js/xray-$_base" ;;
+    esac
+done
+# v4.0.7: подчистить старый вариант с подкаталогом (v4.0.2-4.0.6)
+rm -rf /usr/local/opnsense/www/js/xray
 
 # Write version file
 echo "$PLUGIN_VERSION" > "$VERSION_FILE"

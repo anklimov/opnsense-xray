@@ -5,6 +5,14 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.0.7] — 2026-11-04 (fork)
+
+### Fixed
+- **TypeError на загрузке страницы: `$(...).ajaxPrefilter is not a function`.** Правильный API — глобальная `$.ajaxPrefilter(...)`, а не метод jQuery-объекта. Исключение на загрузке убивало регистрацию ВСЕХ обработчиков ниже по коду: Preview не реагировал на клик, вкладки Diagnostics (все поля «-») и Logs не загружались (найдено по консоли браузера; `node --check` такую ошибку не ловит — она рантаймовая)
+- **Web-ассеты CodeMirror не загружались: `/js/xray/*` → HTML (MIME mismatch).** nginx OPNsense не отдаёт подкаталоги в `/js/` (location-регекс допускает одно звено пути — плоские `/js/*.js` ядра работают). Ассеты ставятся плоско с префиксом: `/js/xray-codemirror.min.js`, `/js/xray-javascript.min.js`, `/js/xray-codemirror.min.css`; установщик вычищает старый вариант с подкаталогом. Редактор Raw JSON до этого молча деградировал в обычную textarea
+
+---
+
 ## [4.0.6] — 2026-11-04 (fork)
 
 ### Fixed

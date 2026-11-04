@@ -865,7 +865,11 @@
         // вне грида, открытие двойным кликом и т.п.). Надёжный источник —
         // ajax bootgrid'а: при открытии редактирования ВСЕГДА запрашивается
         // getItem/<uuid>, при сохранении нового — addItem.
-        $(document).ajaxPrefilter(function (options) {
+        // v4.0.7: $.ajaxPrefilter — ГЛОБАЛЬНАЯ функция jQuery. Предыдущая
+        // запись "$(document).ajaxPrefilter(...)" — TypeError на загрузке
+        // страницы, который убивал регистрацию ВСЕХ обработчиков ниже
+        // (Preview, Diagnostics, Logs).
+        $.ajaxPrefilter(function (options) {
             var url = options.url || '';
             var m = url.match(/\/api\/xray\/instance\/getItem\/([0-9a-fA-F-]{36})/);
             if (m) {
