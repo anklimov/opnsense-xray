@@ -160,10 +160,18 @@ configctl xray version
 |-----|-----------|----------|
 | Назначить интерфейс | Interfaces → Assignments | + Add: **tun100** (на FreeBSD обязано быть `tunN`) |
 | Включить и настроить | Interfaces → \<имя\> | Enable ✓, IPv4: Static, IP: `10.255.0.2/30` (= шлюз + 1) |
-| **Предотвратить удаление** | Interfaces → \<имя\> | **Prevent interface removal ✓** |
+| **Предотвратить удаление** | Interfaces → \<имя\> | Prevent interface removal — **оставить ВЫКЛ** (см. примечание) |
 | Создать шлюз | System → Gateways → Add | Gateway IP: `10.255.0.1`, Far Gateway ✓, Monitoring off ✓ |
 
-> **Важно:** галочка **Prevent interface removal** обязательна — без неё OPNsense может удалить интерфейс из конфига при ребуте, если xray ещё не успел его создать. Статический IP должен совпадать с тем, что назначает xray (шлюз + 1 с той же маской), иначе OPNsense переопределит адрес и сломает маршрутизацию.
+> **Важно — «Prevent interface removal» (Lock): оставь ВЫКЛЮЧЕННОЙ.** Заявленное назначение галочки — сохранить assignment в конфиге при ребутах, но по факту (эмпирически) залоченный TUN-assignment коррелирует с ошибкой старта xray `Failed to start: ... interface xraytunN already exists` (точный механизм под вопросом — см. BACKLOG.md). Если назначение пропадает после ребута — просто добавь заново или осторожно проверь, работает ли Lock в твоём окружении. Статический IP должен совпадать с тем, что назначает xray (шлюз + 1 с той же маской), иначе OPNsense переопределит адрес и сломает маршрутизацию.
+>
+> **Если xray умер нечисто** (крэш, `kill -9`, watchdog после неудачного старта), переименованный TUN-клон остаётся в ядре — FreeBSD не уничтожает его автоматически при смерти процесса (xray не использует ioctl TUNSTRANSIENT). Восстановление:
+>
+> ```sh
+> sockstat | grep xray                    # убедись, что интерфейс никто не держит
+> ifconfig xraytun100 destroy             # снести утечку
+> ```
+> затем Apply / старт.
 
 > **Режим полного туннеля:** при `System Routing = Full tunnel` всё это не нужно — xray сам ставит системные маршруты. Требуется `net.fibs=2` в `/boot/loader.conf` и ребут (собственные соединения xray уходят мимо TUN через вторую таблицу маршрутизации). Значение видно на вкладке **Diagnostics**.
 
@@ -444,7 +452,7 @@ cat /usr/local/tun2socks/config-<uuid>.yaml # только legacy-драйвер
 | `REALITY only supports TCP, H2, gRPC and DomainSocket` | Неподдерживаемая комбинация транспорт+security | Сменить транспорт/security (Reality в визарде серверного inbound требует TCP) |
 | `failed to dial` | VPN-сервер недоступен | Проверить адрес и порт: `ping` или `nc -zv host port` |
 | `address already in use` | Занят порт SOCKS5/серверный | `sockstat -4l \| grep 10808` — сменить порт в GUI или остановить конфликтующий процесс |
-| `interface already exists` | Имя TUN занято (драйвер xray) | Выбрать другой свободный `tunN` для инстанса |
+| `interface already exists` | Прошлый запуск xray оставил переименованный TUN-клон (FreeBSD не уничтожает его при нечистой смерти процесса — xray не ставит TUNSTRANSIENT), либо другой инстанс использует то же имя | `ifconfig <tun> destroy` (сначала проверь `sockstat \| grep xray`), затем Apply; держи **Prevent interface removal (Lock)** ВЫКЛ для TUN-интерфейсов xray; у каждого инстанса — уникальное имя TUN |
 | `automatic outbound interface on FreeBSD needs a second routing table…` | Полный туннель без `net.fibs=2` | Добавить `net.fibs=2` в `/boot/loader.conf` и перезагрузиться |
 
 #### Сетевые предупреждения

@@ -5,6 +5,15 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.4.1] — 2026-11-07 (fork)
+
+### Documentation
+- **README (EN/RU): «Prevent interface removal» (Lock) — рекомендация развёрнута на «оставить ВЫКЛ».** Эмпирически залоченный TUN-assignment коррелирует со сбоем старта `interface xraytunN already exists` (запрос пользователя; точный механизм — открытый вопрос). Инструкция дополнена процедурой восстановления: `sockstat | grep xray` → `ifconfig <tun> destroy` → Apply
+- **Troubleshooting (EN/RU)**: запись `interface already exists` переписана — корневая причина по исходникам FreeBSD `if_tuntap.c`: `tundtor()` при смерти процесса клон НЕ уничтожает (только явный destroy или TUNSTRANSIENT, которого xray не ставит); любая нечистая смерть xray утекает клон в ядро
+- **BACKLOG.md (новый файл)**: открытый вопрос по влиянию Lock + отложенный план v4.4.1 (tun_destroy с ретраями, предстартовая чистка stale-клонов в do_start с проверкой владельца, охота на осиротевшие xray-процессы, guard в do_stop, валидация дублей tun_interface при Apply, опционально — патч xray-core на TUNSTRANSIENT). Аудит OPNsense core приложен: `cloned_interfaces` — 0 вхождений, interface_configure устройства не создаёт, devd-ATTACH пуст, Lock влияет на рантайм только через boot-mismatch prompt
+
+---
+
 ## [4.4.0] — 2026-11-05 (fork)
 
 ### Added

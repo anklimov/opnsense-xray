@@ -160,10 +160,18 @@ With the native TUN driver xray creates the interface itself and assigns the add
 |------|----------|-------|
 | Assign interface | Interfaces → Assignments | + Add: **tun100** (must be `tunN` on FreeBSD) |
 | Enable and configure | Interfaces → \<name\> | Enable ✓, IPv4: Static, IP: `10.255.0.2/30` (= gateway + 1) |
-| **Prevent removal** | Interfaces → \<name\> | **Prevent interface removal ✓** |
+| **Prevent removal** | Interfaces → \<name\> | Prevent interface removal — **leave OFF** (see note) |
 | Create gateway | System → Gateways → Add | Gateway IP: `10.255.0.1`, Far Gateway ✓, Monitoring off ✓ |
 
-> **Important:** the **Prevent interface removal** checkbox is mandatory — without it, OPNsense may remove the interface from config on reboot if xray hasn't created it yet. The static IP must match what xray assigns (gateway + 1 with the same mask), otherwise OPNsense re-applies a different address.
+> **Important — "Prevent interface removal" (Lock): leave it OFF.** Its stated purpose is to keep the assignment in config across reboots, but empirically a locked TUN assignment correlates with xray failing to (re)create the interface on start: `Failed to start: ... interface xraytunN already exists` (exact mechanism under investigation — see BACKLOG.md). If the assignment disappears after a reboot, simply re-add it — or test carefully whether Lock works for you. The static IP must match what xray assigns (gateway + 1 with the same mask), otherwise OPNsense re-applies a different address.
+>
+> **If xray died uncleanly** (crash, `kill -9`, watchdog after a failed start), the renamed TUN clone survives in the kernel — FreeBSD does not auto-destroy it on process death (xray does not use the TUNSTRANSIENT ioctl). Recover with:
+>
+> ```sh
+> sockstat | grep xray                    # make sure no xray process holds it
+> ifconfig xraytun100 destroy             # remove the stale clone
+> ```
+> then Apply / start again.
 
 > **Full tunnel mode:** with `System Routing = Full tunnel` none of this is needed — xray installs the system routes itself. It requires `net.fibs=2` in `/boot/loader.conf` and a reboot (OPNsense keeps xray's own connections out of the TUN via a second routing table). Check the value on the **Diagnostics** tab.
 
@@ -444,7 +452,7 @@ cat /usr/local/tun2socks/config-<uuid>.yaml # legacy driver only
 | `REALITY only supports TCP, H2, gRPC and DomainSocket` | Unsupported transport+security combo | Change transport/security (Reality server inbound in the wizard requires TCP) |
 | `failed to dial` | VPN server unreachable | Check server address and port, test with `ping` or `nc -zv host port` |
 | `address already in use` | SOCKS5/server port occupied | `sockstat -4l \| grep 10808` — change port in GUI or stop conflicting process |
-| `interface already exists` | TUN name taken (xray driver) | Pick another free `tunN` for this instance |
+| `interface already exists` | The previous xray run left the renamed TUN clone behind (FreeBSD keeps it after an unclean process death — xray doesn't set TUNSTRANSIENT), or another instance uses the same name | `ifconfig <tun> destroy` (check `sockstat \| grep xray` first), then Apply; keep **Prevent interface removal (Lock)** OFF for xray TUN interfaces; give each instance a unique TUN name |
 | `automatic outbound interface on FreeBSD needs a second routing table…` | Full tunnel without `net.fibs=2` | Add `net.fibs=2` to `/boot/loader.conf` and reboot |
 
 #### Network Warnings
